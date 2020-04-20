@@ -189,6 +189,18 @@ if [ $? -ne 0 ]; then
 	exit 14
 fi
 
+mkdir -p "${TEMP_DIR}/backups"
+if [ $? -ne 0 ]; then
+	echo "Could not create backup directory"
+	exit 28
+fi
+
+mkdir -p "${TEMP_DIR}/images"
+if [ $? -ne 0 ]; then
+	echo "Could not create images directory"
+	exit 29
+fi
+
 PARTITION_UUID=$(lsblk -n -o UUID $FAT_PARTITION)
 if [ $? -ne 0 ]; then
 	echo "Could not get partition UUID"

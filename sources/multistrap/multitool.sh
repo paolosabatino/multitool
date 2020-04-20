@@ -271,7 +271,7 @@ function do_restore() {
         fi
 
 	declare -a BACKUPS
-	COUNTER=1
+	COUNTER=0
 	STR_BACKUPS=""
 
 	for FILE in ${MOUNT_POINT}/backups/backup*.gz; do
@@ -292,13 +292,15 @@ function do_restore() {
 		return 2
 	fi
 
-	CHOICE=$(<$CHOICE_FILE)
+	CHOICE=$(cat $CHOICE_FILE)
 	RESTORE_SOURCE=${BACKUPS[$CHOICE]}
 	BASENAME=$(basename $RESTORE_SOURCE)
+	DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size)
+        DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
 	
 	set_led_state "$DEVICE_NAME"
 
-	(pv -n $RESTORE_SOURCE | pigz -d | dd of=/dev/$BLK_DEVICE bs=512k iflag=fullblock oflag=direct 2>/dev/null) | dialog \
+	(dd if="$RESTORE_SOURCE" bs=256K | pigz -d | pv -n -s ${DEVICE_SIZE}K | dd of=/dev/$BLK_DEVICE bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
 		--gauge "Restore of backup $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
 
@@ -318,6 +320,191 @@ function do_restore() {
 
 }
 
+# Given a file as first argument, returns its compressed format
+function get_compression_format() {
+
+	TARGET=$1
+
+	pigz -l "$TARGET" >/dev/null 2>&1
+
+	if [ $? -eq 0 ]; then
+		echo "gzip"
+		return 0
+	fi
+
+	xz -l "$TARGET" >/dev/null 2>&1
+
+	if [ $? -eq 0 ]; then
+		echo "xz"
+		return 0
+	fi
+
+	7zr l "$TARGET" >/dev/null 2>&1
+
+	if [ $? -eq 0 ]; then
+		echo "7zip"
+		return 0
+	fi
+
+	bzip2 -t "$TARGET" >/dev/null 2>&1
+
+	if [ $? -eq 0 ]; then
+		echo "bzip2"
+		return 0
+	fi
+
+	return 1
+
+}
+
+# Outputs the decompression command line suitable for the given input file
+# and format
+function get_decompression_cli() {
+
+	TARGET=$1
+	FORMAT=$2
+
+	if [ "$FORMAT" = "gzip" ]; then
+		echo "pigz -d"
+		return 0
+	elif [ "$FORMAT" = "xz" ]; then
+		echo "xz -d -T4"
+		return 0
+	elif [ "$FORMAT" = "bzip2" ]; then
+		echo "bzip2 -d -c"
+		return 0
+	elif [ "$FORMAT" = "raw" ]; then
+		echo "tee /dev/null"
+		return 0
+	elif [ "$FORMAT" = "7zip" ]; then
+		echo "7zr e -si -so -mmt 4"
+		return 0
+	fi
+
+	return 1
+
+}
+
+# Restore an image and burns it onto an eMMC device
+function do_burn() {
+
+	# Verify there is at least one suitable device
+	if [ ${#DEVICES_MMC[@]} -eq 0 ]; then
+		inform_wait "There are no eMMC devices suitable for image burn"
+		return 3 # Not available
+	fi
+
+	# Ask the user which device she wants to restore
+	TARGET_DEVICE=$(choose_mmc_device "Burn image to eMMC device" $DEVICES_MMC)
+
+	if [ $? -ne 0 ]; then
+		return 2 # User cancelled
+	fi
+
+	if [ -z "$TARGET_DEVICE" ]; then
+		return 2 # No restore device, user cancelled?
+	fi
+
+	BASENAME=$(basename $TARGET_DEVICE)
+	BLK_DEVICE=$(get_block_device $TARGET_DEVICE)
+	DEVICE_NAME=$(echo $BASENAME | cut -d ":" -f 1)
+
+	# Mount the fat partition
+	mount_fat_partition
+
+	if [ $? -ne 0 ]; then
+		inform_wait "There has been an error mounting the FAT partition, image burn cannot continue"
+		unmount_fat_partition
+		return 1
+	fi
+
+	# Search the images path on the FAT partition
+	if [ ! -d "${MOUNT_POINT}/images" ]; then
+		unmount_fat_partition
+                inform_wait "There are no images on FAT partition, image burn cannot continue"
+		return 3
+        fi
+
+	IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -iname '*' | wc -l)
+	if [ $IMAGES_COUNT -eq 0 ]; then
+		unmount_fat_partition
+		inform_wait "There are no images on FAT partition, image burn cannot continue"
+		return 3
+        fi
+
+	declare -a IMAGES
+	COUNTER=0
+	STR_IMAGES=""
+
+	for FILE in ${MOUNT_POINT}/images/*; do
+		IMAGES+=($FILE)
+		BASENAME=$(basename $FILE)
+		STR_IMAGES="$STR_IMAGES $COUNTER $BASENAME"
+		COUNTER=$(($COUNTER + 1))
+	done
+
+	dialog --backtitle "$BACKTITLE" \
+		--title "Burn an image to $BLK_DEVICE" \
+		--menu "Choose an image file" 20 40 18 \
+		$STR_IMAGES \
+		2> $CHOICE_FILE
+
+	if [ $? -ne 0 ]; then
+		unmount_fat_partition
+		return 2
+	fi
+
+	CHOICE=$(cat $CHOICE_FILE)
+	IMAGE_SOURCE=${IMAGES[$CHOICE]}
+	BASENAME=$(basename $IMAGE_SOURCE)
+
+	COMPRESSION_FORMAT=$(get_compression_format $IMAGE_SOURCE)
+
+	if [ $? -ne 0 ]; then
+
+		dialog --backtitle "$BACKTITLE" \
+			--yesno "Do you want to proceed to burn a RAW image?" 10 60
+
+		if [ $? -ne 0 ]; then
+			return 2
+		fi
+
+		COMPRESSION_FORMAT="raw"
+
+	fi
+
+	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE $COMPRESSION_FORMAT)
+
+	if [ $? -ne 0 ]; then
+
+		inform_wait "Unknown file format, cannot proceed"
+		return 1
+
+	fi
+
+	set_led_state "$DEVICE_NAME"
+
+	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of=/dev/$BLK_DEVICE bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+		--backtitle "$BACKTITLE" \
+		--gauge "Burning image $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
+
+	ERR=$?
+
+	if [ $ERR -ne 0 ]; then
+		unmount_fat_partition
+		inform_wait "An error occurred ($ERR) while burning image, process has not been completed"
+		return 1
+	fi
+
+	unmount_fat_partition
+
+	inform_wait "Image has been burned to device $BLK_DEVICE"
+
+	return 0
+
+}
+
+
 function do_erase_mmc() {
 
 	# Verify there is at least one suitable device
@@ -333,7 +520,7 @@ function do_erase_mmc() {
                 return 2 # User cancelled
         fi
 
-        if [ -n "$ERASE_DEVICE" ]; then
+        if [ -z "$ERASE_DEVICE" ]; then
                 return 2 # No backup device, user cancelled?
         fi
 
@@ -346,7 +533,7 @@ function do_erase_mmc() {
 	# erase an eMMC
 	inform "Erasing eMMC device $BLK_DEVICE using blkdiscard..."
 
-	if [ -n "$DEVICENAME" ] && [ -e ; then
+	if [ -n "$DEVICENAME" ]; then
 		set_led_state "$DEVICENAME"
 	fi
 
@@ -378,6 +565,26 @@ function do_give_shell() {
 
 }
 
+function do_reboot() {
+
+	unmount_fat_partition
+
+	sleep 1
+
+	echo b > /proc/sysrq-trigger
+
+}
+
+function do_shutdown() {
+
+	unmount_fat_partition
+
+	sleep 1
+
+	echo o > /proc/sysrq-trigger
+
+}
+
 # ----- Entry point -----
 
 find_mmc_devices
@@ -393,6 +600,9 @@ while true; do
 		2 "Restore" \
 		3 "Erase eMMC" \
 		4 "Drop to shell" \
+		5 "Burn image to eMMC" \
+		8 "Reboot" \
+		9 "Shutdown" \
 		2>$CHOICE_FILE
 
 	CHOICE=$(cat $CHOICE_FILE)
@@ -406,6 +616,12 @@ while true; do
 		do_erase_mmc
 	elif [ $CHOICE -eq 4 ]; then
 		do_give_shell
+	elif [ $CHOICE -eq 5 ]; then
+		do_burn
+	elif [ $CHOICE -eq 8 ]; then
+		do_reboot
+	elif [ $CHOICE -eq 9 ]; then
+		do_shutdown
 	fi
 
 done
