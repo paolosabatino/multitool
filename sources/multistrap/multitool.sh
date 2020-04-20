@@ -167,7 +167,7 @@ function do_backup() {
 	fi
 
 	# Ask the user which device she wants to backup
-	BACKUP_DEVICE=$(choose_mmc_device "Backup eMMC device" $DEVICES_MMC)
+	BACKUP_DEVICE=$(choose_mmc_device "Select source eMMC device" $DEVICES_MMC)
 
 	if [ $? -ne 0 ]; then
 		return 2 # User cancelled
@@ -233,7 +233,7 @@ function do_restore() {
 	fi
 
 	# Ask the user which device she wants to restore
-	RESTORE_DEVICE=$(choose_mmc_device "Restore to eMMC device" $DEVICES_MMC)
+	RESTORE_DEVICE=$(choose_mmc_device "Select the target eMMC device" $DEVICES_MMC)
 
 	if [ $? -ne 0 ]; then
 		return 2 # User cancelled
@@ -283,7 +283,7 @@ function do_restore() {
 
 	dialog --backtitle "$BACKTITLE" \
 		--title "Restore a backup file to $BLK_DEVICE" \
-		--menu "Choose a backup file" 20 40 18 \
+		--menu "Choose a backup file" 20 60 18 \
 		$STR_BACKUPS \
 		2> $CHOICE_FILE
 
@@ -395,7 +395,7 @@ function do_burn() {
 	fi
 
 	# Ask the user which device she wants to restore
-	TARGET_DEVICE=$(choose_mmc_device "Burn image to eMMC device" $DEVICES_MMC)
+	TARGET_DEVICE=$(choose_mmc_device "Select the target eMMC device" $DEVICES_MMC)
 
 	if [ $? -ne 0 ]; then
 		return 2 # User cancelled
@@ -413,7 +413,7 @@ function do_burn() {
 	mount_fat_partition
 
 	if [ $? -ne 0 ]; then
-		inform_wait "There has been an error mounting the FAT partition, image burn cannot continue"
+		inform_wait "There has been an error mounting the FAT partition."
 		unmount_fat_partition
 		return 1
 	fi
@@ -421,14 +421,14 @@ function do_burn() {
 	# Search the images path on the FAT partition
 	if [ ! -d "${MOUNT_POINT}/images" ]; then
 		unmount_fat_partition
-                inform_wait "There are no images on FAT partition, image burn cannot continue"
+                inform_wait "There are no images on FAT partition."
 		return 3
         fi
 
-	IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -iname '*' | wc -l)
+	IMAGES_COUNT=$(find -type f "${MOUNT_POINT}/images" -iname '*' 2>/dev/null | wc -l)
 	if [ $IMAGES_COUNT -eq 0 ]; then
 		unmount_fat_partition
-		inform_wait "There are no images on FAT partition, image burn cannot continue"
+		inform_wait "There are no images on FAT partition."
 		return 3
         fi
 
@@ -445,7 +445,7 @@ function do_burn() {
 
 	dialog --backtitle "$BACKTITLE" \
 		--title "Burn an image to $BLK_DEVICE" \
-		--menu "Choose an image file" 20 40 18 \
+		--menu "Choose the source image file" 20 60 18 \
 		$STR_IMAGES \
 		2> $CHOICE_FILE
 
@@ -466,6 +466,7 @@ function do_burn() {
 			--yesno "Do you want to proceed to burn a RAW image?" 10 60
 
 		if [ $? -ne 0 ]; then
+			unmount_fat_partition
 			return 2
 		fi
 
@@ -478,6 +479,7 @@ function do_burn() {
 	if [ $? -ne 0 ]; then
 
 		inform_wait "Unknown file format, cannot proceed"
+		unmount_fat_partition
 		return 1
 
 	fi
