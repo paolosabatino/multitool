@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# Mount the sys, proc, tmpfs filesystems
+mount -t sysfs /sys /sys
+mount -t tmpfs /tmp /tmp
+mount -t proc /proc /proc
+
+# Check if the fat partition requires a resize
+BOOT_DEVICE="mmcblk0"
+FAT_PARTITION="p2"
+
+if [ -b "/dev/${BOOT_DEVICE}${FAT_PARTITION}" ]; then
+
+	MAX_DIFF_SPACE=$((1024 * 1024)) # a difference in spare space greater than this amount
+					# triggers a resize (1 GB)
+
+	THRES_DIFF_SPACE=$((128 * 1024)) # fill the FAT partition up to this space (max - 128 MB)
+	
+	FAT_PARTITION_START=$(cat "/sys/block/${BOOT_DEVICE}/${BOOT_DEVICE}${FAT_PARTITION}/start") # sectors
+	FAT_PARTITION_SIZE=$(cat "/sys/block/${BOOT_DEVICE}/${BOOT_DEVICE}${FAT_PARTITION}/size") # sectors
+
+	DEVICE_SIZE=$(cat "/sys/block/${BOOT_DEVICE}/size")
+	SPARE_SPACE=$(($DEVICE_SIZE - $FAT_PARTITION_START))
+
+	SPARE_SPACE=$(($DEVICE_SIZE / 2)) # sectors / 2 = kbytes
+	FAT_PARTITION_SIZE=$(($FAT_PARTITION_SIZE / 2)) # sectors / 2 = kbytes
+
+	DIFF_SPACE=$(($SPARE_SPACE - $FAT_PARTITION_SIZE))
+
+	if [ $DIFF_SPACE -gt $MAX_DIFF_SPACE ]; then
+
+		dialog --infobox "Please wait some seconds, resizing FAT partition..." 5 60 <> /dev/tty1 >&0 2>&1
+
+		fatresize -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))ki "/dev/${BOOT_DEVICE}${FAT_PARTITION}"
+
+		ERR=$?
+
+		if [ $ERR -ne 0 ]; then
+			dialog --msgbox "Could not resize FAT partition, error 34 occurred" 7 60 <> /dev/tty1 >&0 2>&1
+		fi
+
+	fi
+
+fi
+
+if [ -f /usr/local/bin/multitool.sh ]; then
+	/bin/bash /usr/local/bin/multitool.sh <> /dev/tty1 >&0 2>&1	
+fi
+
+while true; do
+	getty --autologin root tty1
+done
