@@ -213,6 +213,12 @@ if [ $? -ne 0 ]; then
 	exit 16
 fi
 
+cp "${PWD}/LICENSE" "${TEMP_DIR}/LICENSE"
+if [ $? -ne 0 ]; then
+	echo "Could not copy LICENSE to partition"
+	exit 28
+fi
+
 echo "Unmount FAT32 partition"
 umount "$FAT_PARTITION" >/dev/null 2>&1
 

@@ -1,7 +1,16 @@
 #/bin/bash
 
-BACKTITLE="SD/eMMC card helper Multitool for TV Boxes and alike - Paolo Sabatino"
+BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
+
+RKNAND_WARNING="WARNING!!\n\nrknand device has been detected. Please be aware that, due to the \
+limitations of the proprietary driver, all the functionalities of this software are \
+limited.\n\nYou will probably not able to backup and restore low-level loaders (idbloader) and not \
+able to install working images\n"
+
+JUMPSTART_WARNING="Jump start for Armbian\n\nThis feature will install an alternative U-boot bootloader \
+on the NAND memory that allows Armbian pristine images to be run from SD card or USB devices\n\nNote that \
+your existing firmware will not boot anymore, so please be aware that you may want to do a backup first\n"
 
 CHOICE_FILE="/tmp/choice"
 
@@ -33,6 +42,22 @@ function find_mmc_devices() {
 			DEVICES_SDIO+=($DEVICE)
 		fi
 	done
+
+}
+
+# Find devices which have specific paths, like proprietary NAND drivers
+function find_special_devices() {
+
+	SYS_RKNAND_BLK_DEV="/dev/rknand0"
+
+	if [ -b "$SYS_RKNAND_BLK_DEV" ]; then
+
+		dialog --backtitle "$BACKTITLE" --msgbox "$RKNAND_WARNING" 0 0
+
+		SYS_RKNAND_DEVICE=$(realpath /sys/block/rknand0/device)
+		DEVICES_MMC+=($SYS_RKNAND_DEVICE)
+
+	fi	
 
 }
 
@@ -202,11 +227,10 @@ function do_backup() {
 	# Do the backup!
 	set_led_state "$DEVICE_NAME"
 
-	(pv -n /dev/$BLK_DEVICE | pigz | dd of="$MOUNT_POINT/backups/backup.gz" iflag=fullblock oflag=direct bs=512k 2>/dev/null) 2>&1 | dialog \
+	(pv -n "/dev/$BLK_DEVICE" | pigz | dd of="$MOUNT_POINT/backups/backup.gz" iflag=fullblock oflag=direct bs=512k 2>/dev/null) 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
 		--gauge "Backup of device $BLK_DEVICE is in progress, please wait..." 10 70 0
 
-	#dd if="/dev/$BASENAME" bs=512k 2>/dev/null | gzip | dd of="$MOUNT_POINT/backups/backup.gz" oflag=direct bs=512k iflag=fullblock 2>/dev/null
 	ERR=$?
 
 	if [ $ERR -ne 0 ]; then
@@ -300,7 +324,7 @@ function do_restore() {
 	
 	set_led_state "$DEVICE_NAME"
 
-	(dd if="$RESTORE_SOURCE" bs=256K | pigz -d | pv -n -s ${DEVICE_SIZE}K | dd of=/dev/$BLK_DEVICE bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+	(dd if="$RESTORE_SOURCE" bs=256K | pigz -d | pv -n -s ${DEVICE_SIZE}K | dd of="/dev/$BLK_DEVICE" bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
 		--gauge "Restore of backup $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
 
@@ -353,6 +377,13 @@ function get_compression_format() {
 		return 0
 	fi
 
+	zip -l "$TARGET" >/dev/null 2>&1
+
+	if [ $? -eq 0 ]; then
+		echo "zip"
+		return 0
+	fi
+
 	return 1
 
 }
@@ -378,6 +409,9 @@ function get_decompression_cli() {
 		return 0
 	elif [ "$FORMAT" = "7zip" ]; then
 		echo "7zr e -si -so -mmt 4"
+		return 0
+	elif [ "$FORMAT" = "zip" ]; then
+		echo "funzip"
 		return 0
 	fi
 
@@ -486,7 +520,7 @@ function do_burn() {
 
 	set_led_state "$DEVICE_NAME"
 
-	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of=/dev/$BLK_DEVICE bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
 		--gauge "Burning image $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
 
@@ -547,12 +581,51 @@ function do_erase_mmc() {
 	fi
 
 	# Try to erase using dd
-	ERASE_SIZE=$(cat $ERASE_DEVICE/preferred_erase_size)
+	ERASE_SIZE=$(cat $ERASE_DEVICE/preferred_erase_size >/dev/null 2>&1)
+	ERASE_SIZE=${ERASE_SIZE:-"4M"}
 	DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size)
 	DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
 	(pv -n -s ${DEVICE_SIZE}K /dev/zero | dd of="/dev/$BLK_DEVICE" iflag=fullblock bs=$ERASE_SIZE oflag=direct 2>/dev/null) 2>&1 | dialog --gauge "Erase is in progress, please wait..." 10 70 0
 
 	inform_wait "Success! Device $BLK_DEVICE has been erased!"
+
+	return 0
+
+}
+
+# Install jump start for armbian on NAND
+function do_install_jump_start() {
+
+	if [ ! -b "/dev/rknand0" ]; then
+		inform_wait "Jump start is for devices equipped with NAND only"
+		return 3
+	fi
+
+	dialog --backtitle "$BACKTITLE" --yesno "$JUMPSTART_WARNING" 0 0
+
+	if [ $? -ne 0 ]; then
+		return 2
+	fi
+
+	inform "Transferring boot loader, please wait..."
+
+	dd if=/dev/mmcblk0 of=/dev/rknand0 skip=$((0x4000)) seek=$((0x2000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		inform_wait "Could not transfer U-boot on NAND device"
+		return 1
+	fi
+
+	dd if=/dev/mmcblk0 of=/dev/rknand0 skip=$((0x8000)) seek=$((0x6000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		inform_wait "Could not transfer TEE on NAND device"
+		return 1
+	fi
+
+	sync
+	
+	sleep 1
+
+	inform_wait "Jump start installed!"
 
 	return 0
 
@@ -589,7 +662,15 @@ function do_shutdown() {
 
 # ----- Entry point -----
 
+mount_fat_partition
+
+dialog --backtitle "$BACKTITLE" \
+	--textbox "/mnt/LICENSE" 0 0
+
+unmount_fat_partition
+
 find_mmc_devices
+find_special_devices
 
 while true; do
 
@@ -597,12 +678,13 @@ while true; do
 
 	dialog --backtitle "$BACKTITLE" \
 		--title "$TITLE_MAIN_MENU" \
-		--menu "Choose an option" 20 40 18 \
-		1 "Backup" \
-		2 "Restore" \
-		3 "Erase eMMC" \
+		--menu "Choose an option" 0 0 0 \
+		1 "Backup eMMC/NAND" \
+		2 "Restore eMMC/NAND" \
+		3 "Erase eMMC/NAND" \
 		4 "Drop to shell" \
-		5 "Burn image to eMMC" \
+		5 "Burn image to eMMC/NAND" \
+		6 "Install Jump start on NAND" \
 		8 "Reboot" \
 		9 "Shutdown" \
 		2>$CHOICE_FILE
@@ -620,6 +702,8 @@ while true; do
 		do_give_shell
 	elif [ $CHOICE -eq 5 ]; then
 		do_burn
+	elif [ $CHOICE -eq 6 ]; then
+		do_install_jump_start
 	elif [ $CHOICE -eq 8 ]; then
 		do_reboot
 	elif [ $CHOICE -eq 9 ]; then
