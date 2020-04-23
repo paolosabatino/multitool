@@ -1,5 +1,7 @@
 #/bin/bash
 
+TTY_CONSOLE="/dev/tty$(fgconsole)"
+
 BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
 
@@ -121,24 +123,25 @@ function set_led_state() {
 function choose_mmc_device() {
 
 	TITLE=$1
-	DEVICES=$2
-	STR_DEVICES=""
-	TTY_CONSOLE=$(fgconsole)
-	TTY_CONSOLE="/dev/tty${TTY_CONSOLE}"
+	MENU_TITLE=$2
+	DEVICES=$3
+
+	declare -a ARR_DEVICES
 
 	for IDX in ${!DEVICES[@]}; do
 		BASENAME=$(basename ${DEVICES[$IDX]})
 		BLKDEVICE=$(get_block_device ${DEVICES[$IDX]})
 		NAME=$(cat ${DEVICES[$IDX]}/name)
-		STR_DEVICES="$STR_DEVICES $IDX $BLKDEVICE($BASENAME,$NAME)"
+		if [[ -n "$NAME" ]]; then
+			ARR_DEVICES+=($IDX "${BLKDEVICE} - $NAME ($BASENAME)")
+		else
+			ARR_DEVICES+=($IDX "${BLKDEVICE} ($BASENAME)")
+		fi
 	done
-	
-	dialog --backtitle "$BACKTITLE" \
-		--title "$TITLE" \
-		--menu "Choose an option" 20 40 18\
-		$STR_DEVICES \
-		> $TTY_CONSOLE \
-		2> $CHOICE_FILE
+
+	MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU_TITLE" 24 60 18)
+
+	CHOICE=$("${MENU_CMD[@]}" "${ARR_DEVICES[@]}" 2>&1 >$TTY_CONSOLE)
 
 	# No choice, return error code 1
 	if [ $? -ne 0 ]; then
@@ -146,8 +149,6 @@ function choose_mmc_device() {
 	fi
 
 	# When the user selects a choice, print the real choice (ie: the device path)
-	CHOICE=$(cat $CHOICE_FILE)
-
 	echo ${DEVICES[$CHOICE]}
 
 	return 0
@@ -192,7 +193,7 @@ function do_backup() {
 	fi
 
 	# Ask the user which device she wants to backup
-	BACKUP_DEVICE=$(choose_mmc_device "Select source eMMC device" $DEVICES_MMC)
+	BACKUP_DEVICE=$(choose_mmc_device "Backup flash" "Select source device:" $DEVICES_MMC)
 
 	if [ $? -ne 0 ]; then
 		return 2 # User cancelled
@@ -205,6 +206,15 @@ function do_backup() {
 	BASENAME=$(basename $BACKUP_DEVICE)
 	BLK_DEVICE=$(get_block_device $BACKUP_DEVICE)
 	DEVICE_NAME=$(echo $BASENAME | cut -d ":" -f 1)
+
+	# Ask the user the backup filename
+	BACKUP_FILENAME=$(dialog --backtitle "$BACKTITLE" --title "Backup flash" --inputbox "Enter the backup filename" 6 60 "tvbox-backup" 2>&1 >$TTY_CONSOLE)
+
+	if [ $? -ne 0 ]; then
+		return 2 # User cancelled
+	fi
+
+	BACKUP_PATH="${MOUNT_POINT}/backups/${BACKUP_FILENAME}.gz"
 
 	# Mount the fat partition
 	mount_fat_partition
@@ -224,10 +234,22 @@ function do_backup() {
 		return 1
 	fi
 
+	# Check if the file proposed by the user does already exist
+	if [ -e "$BACKUP_PATH" ]; then
+		dialog --backtitle "$BACKTITLE" \
+			--title ="Backup flash" \
+			--yesno "A backup file with the same name already exists, do you want to proceed to overwrite it?" 7 60
+
+		if [ $? -ne 0 ]; then
+			unmount_fat_partition
+			return 2
+		fi
+	fi
+
 	# Do the backup!
 	set_led_state "$DEVICE_NAME"
 
-	(pv -n "/dev/$BLK_DEVICE" | pigz | dd of="$MOUNT_POINT/backups/backup.gz" iflag=fullblock oflag=direct bs=512k 2>/dev/null) 2>&1 | dialog \
+	(pv -n "/dev/$BLK_DEVICE" | pigz | dd of="$BACKUP_PATH" iflag=fullblock oflag=direct bs=512k 2>/dev/null) 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
 		--gauge "Backup of device $BLK_DEVICE is in progress, please wait..." 10 70 0
 
@@ -257,7 +279,7 @@ function do_restore() {
 	fi
 
 	# Ask the user which device she wants to restore
-	RESTORE_DEVICE=$(choose_mmc_device "Select the target eMMC device" $DEVICES_MMC)
+	RESTORE_DEVICE=$(choose_mmc_device "Restore backup" "Select destination device:" $DEVICES_MMC)
 
 	if [ $? -ne 0 ]; then
 		return 2 # User cancelled
@@ -429,7 +451,7 @@ function do_burn() {
 	fi
 
 	# Ask the user which device she wants to restore
-	TARGET_DEVICE=$(choose_mmc_device "Select the target eMMC device" $DEVICES_MMC)
+	TARGET_DEVICE=$(choose_mmc_device "Burn image to flash" "Select destination device:" $DEVICES_MMC)
 
 	if [ $? -ne 0 ]; then
 		return 2 # User cancelled
@@ -550,7 +572,7 @@ function do_erase_mmc() {
         fi
 
 	 # Ask the user which device she wants to erase
-        ERASE_DEVICE=$(choose_mmc_device "Erase MMC device" $DEVICES_MMC)
+        ERASE_DEVICE=$(choose_mmc_device "Erase flash" "Select device to erase:" $DEVICES_MMC)
 
         if [ $? -ne 0 ]; then
                 return 2 # User cancelled
@@ -596,11 +618,6 @@ function do_erase_mmc() {
 # Install jump start for armbian on NAND
 function do_install_jump_start() {
 
-	if [ ! -b "/dev/rknand0" ]; then
-		inform_wait "Jump start is for devices equipped with NAND only"
-		return 3
-	fi
-
 	dialog --backtitle "$BACKTITLE" --yesno "$JUMPSTART_WARNING" 0 0
 
 	if [ $? -ne 0 ]; then
@@ -636,7 +653,7 @@ function do_give_shell() {
 
 	echo -e "Drop to a bash shell. Exit the shell to return to Multitool\n"
 
-	/bin/bash -i
+	/bin/bash -il
 
 }
 
@@ -672,24 +689,25 @@ unmount_fat_partition
 find_mmc_devices
 find_special_devices
 
+declare -a MENU_ITEMS
+
+MENU_ITEMS+=(1 "Backup flash")
+MENU_ITEMS+=(2 "Restore flash")
+MENU_ITEMS+=(3 "Erase flash")
+MENU_ITEMS+=(4 "Drop to Bash shell")
+MENU_ITEMS+=(5 "Burn image to flash")
+[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(6 "Install Jump start on NAND")
+MENU_ITEMS+=(8 "Reboot")
+MENU_ITEMS+=(9 "Shutdown")
+
+MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE_MAIN_MENU" --menu "Choose an option" 0 0 0)
+
 while true; do
 
 	set_led_state "timer"
 
-	dialog --backtitle "$BACKTITLE" \
-		--title "$TITLE_MAIN_MENU" \
-		--menu "Choose an option" 0 0 0 \
-		1 "Backup eMMC/NAND" \
-		2 "Restore eMMC/NAND" \
-		3 "Erase eMMC/NAND" \
-		4 "Drop to shell" \
-		5 "Burn image to eMMC/NAND" \
-		6 "Install Jump start on NAND" \
-		8 "Reboot" \
-		9 "Shutdown" \
-		2>$CHOICE_FILE
+	CHOICE=$("${MENU_CMD[@]}" "${MENU_ITEMS[@]}" 2>&1 >$TTY_CONSOLE)
 
-	CHOICE=$(cat $CHOICE_FILE)
 	CHOICE=${CHOICE:-0}
 
 	if [ $CHOICE -eq 1 ]; then
