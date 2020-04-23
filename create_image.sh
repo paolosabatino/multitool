@@ -84,19 +84,20 @@ fi
 
 START=$((0x8000))
 END=$(($START + $ROOTFS_SECTORS - 1))
-parted -s -- "$LOOP_DEVICE" unit s mkpart primary $START $END >/dev/null 2>&1 
-if [ $? -ne 0 ]; then
-	echo "Could not create rootfs partition"
-	exit 3
-fi
-
 parted -s -- "$LOOP_DEVICE" unit s mkpart primary fat32 $(($END + 1)) -1s >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not create fat partition"
 	exit 3
 fi
 
-parted -s -- "$LOOP_DEVICE" set 1 boot off set 1 hidden on set 2 boot on >/dev/null 2>&1
+parted -s -- "$LOOP_DEVICE" unit s mkpart primary $START $END >/dev/null 2>&1 
+if [ $? -ne 0 ]; then
+	echo "Could not create rootfs partition"
+	exit 3
+fi
+
+
+parted -s -- "$LOOP_DEVICE" set 1 boot on set 2 boot off >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not set partition flags"
 	exit 28
@@ -115,8 +116,8 @@ if [ $? -ne 0 ]; then
 fi
 
 LOOP_DEVICE=$(losetup -f --show -P "$DEST_IMAGE")
-SQUASHFS_PARTITION="${LOOP_DEVICE}p1"
-FAT_PARTITION="${LOOP_DEVICE}p2"
+SQUASHFS_PARTITION="${LOOP_DEVICE}p2"
+FAT_PARTITION="${LOOP_DEVICE}p1"
 
 if [ $? -ne 0 ]; then
 	echo "Could not remount loop device $LOOP_DEVICE"
@@ -280,5 +281,7 @@ if [ $? -ne 0 ]; then
 	echo "Could not unmount $LOOP_DEVICE"
 	exit 23
 fi
+
+sync
 
 echo "Done! Available image in $DEST_IMAGE"

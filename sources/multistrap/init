@@ -10,7 +10,7 @@ getty --autologin root ttyS2 &
 
 # Check if the fat partition requires a resize
 BOOT_DEVICE="mmcblk0"
-FAT_PARTITION="p2"
+FAT_PARTITION="p1"
 
 if [ -b "/dev/${BOOT_DEVICE}${FAT_PARTITION}" ]; then
 

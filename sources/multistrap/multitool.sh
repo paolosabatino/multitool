@@ -16,7 +16,7 @@ your existing firmware will not boot anymore, so please be aware that you may wa
 
 CHOICE_FILE="/tmp/choice"
 
-FAT_PARTITION="/dev/mmcblk0p2"
+FAT_PARTITION="/dev/mmcblk0p1"
 
 MOUNT_POINT="/mnt"
 WORK_LED="/sys/class/leds/led:state1"
@@ -481,7 +481,7 @@ function do_burn() {
 		return 3
         fi
 
-	IMAGES_COUNT=$(find -type f "${MOUNT_POINT}/images" -iname '*' 2>/dev/null | wc -l)
+	IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -type f -iname '*' 2>/dev/null | wc -l)
 	if [ $IMAGES_COUNT -eq 0 ]; then
 		unmount_fat_partition
 		inform_wait "There are no images on FAT partition."
