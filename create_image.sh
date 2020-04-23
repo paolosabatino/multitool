@@ -1,9 +1,9 @@
 #!/bin/bash
 
-PWD=$(pwd)
-DIST_PATH="$PWD/dist"
-SOURCES_PATH="$PWD/sources"
-TOOLS_PATH="$PWD/tools"
+CWD=$(pwd)
+DIST_PATH="$CWD/dist"
+SOURCES_PATH="$CWD/sources"
+TOOLS_PATH="$CWD/tools"
 
 DEST_IMAGE="$DIST_PATH/multitool.img"
 
@@ -55,7 +55,7 @@ if [ $? -ne 0 ]; then
 	exit 27
 fi
 
-cd "$PWD"
+cd "$CWD"
 
 echo "-> rootfs size: ${ROOTFS_SIZE}kb"
 
@@ -213,7 +213,7 @@ if [ $? -ne 0 ]; then
 	exit 16
 fi
 
-cp "${PWD}/LICENSE" "${TEMP_DIR}/LICENSE"
+cp "${CWD}/LICENSE" "${TEMP_DIR}/LICENSE"
 if [ $? -ne 0 ]; then
 	echo "Could not copy LICENSE to partition"
 	exit 28

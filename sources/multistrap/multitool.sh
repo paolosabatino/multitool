@@ -309,7 +309,7 @@ function do_restore() {
 		return 3
         fi
 
-	BACKUP_COUNT=$(find "${MOUNT_POINT}/backups" -iname 'backup*.gz' | wc -l)
+	BACKUP_COUNT=$(find "${MOUNT_POINT}/backups" -iname '*.gz' | wc -l)
 	if [ $BACKUP_COUNT -eq 0 ]; then
 		unmount_fat_partition
 		inform_wait "There are no backups on FAT partition, restore cannot continue"
@@ -320,7 +320,7 @@ function do_restore() {
 	COUNTER=0
 	STR_BACKUPS=""
 
-	for FILE in ${MOUNT_POINT}/backups/backup*.gz; do
+	for FILE in ${MOUNT_POINT}/backups/*.gz; do
 		BACKUPS+=($FILE)
 		BASENAME=$(basename $FILE)
 		STR_BACKUPS="$STR_BACKUPS $COUNTER $BASENAME"
