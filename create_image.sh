@@ -142,6 +142,53 @@ if [ $? -ne 0 ]; then
 	exit 27
 fi
 
+echo "Creating and installing u-boot.img for rockchip platform"
+"$TOOLS_PATH/loaderimage" --pack --uboot "${SOURCES_PATH}/u-boot-dtb.bin" "${DIST_PATH}/uboot.img" 0x61000000 >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not create uboot.img"
+	exit 18
+fi
+
+dd if="${DIST_PATH}/uboot.img" of="$LOOP_DEVICE" seek=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install uboot.img"
+	exit 19
+fi
+
+echo "Creating and installing trustos.img for rockchip platform"
+"$TOOLS_PATH/loaderimage" --pack --trustos "${SOURCES_PATH}/rk322x_tee_ta_1.1.0-297-ga4fd2d1.bin" "${DIST_PATH}/trustos.img" 0x68400000 >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not create trustos.img"
+	exit 20
+fi
+
+echo "Creating legacy u-boot for rockchip platform"
+"$TOOLS_PATH/loaderimage" --pack --uboot "${SOURCES_PATH}/legacy-rk-uboot.bin" "${DIST_PATH}/legacy-uboot.img" 0x60200000 >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not pack legacy rockchip u-boot"
+	exit 32
+fi
+
+dd if="${DIST_PATH}/trustos.img" of="$LOOP_DEVICE" seek=$((0x6000)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install trustos.img"
+	exit 21
+fi
+
+echo "Installing idbloader.img"
+
+dd if="${SOURCES_PATH}/idbloader.img" of="$LOOP_DEVICE" seek=$((0x40)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install idbloader.img"
+	exit 22
+fi
+
 echo "Formatting FAT32 partition"
 mkfs.vfat "$FAT_PARTITION" >/dev/null 2>&1
 
@@ -202,6 +249,22 @@ if [ $? -ne 0 ]; then
 	exit 29
 fi
 
+mkdir -p "${TEMP_DIR}/bsp"
+if [ $? -ne 0 ]; then
+	echo "Could not create bsp directory"
+	exit 30
+fi
+
+echo "Copying board support package blobs into bsp directory"
+cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img" && \
+cp "${DIST_PATH}/trustos.img" "${TEMP_DIR}/bsp/trustos.img" && \
+cp "${DIST_PATH}/legacy-uboot.img" "${TEMP_DIR}/bsp/legacy-uboot.img"
+
+if [ $? -ne 0 ]; then
+	echo "Could not copy bsp files"
+	exit 33
+fi
+
 PARTITION_UUID=$(lsblk -n -o UUID $FAT_PARTITION)
 if [ $? -ne 0 ]; then
 	echo "Could not get partition UUID"
@@ -233,45 +296,6 @@ rmdir "$TEMP_DIR"
 if [ $? -ne 0 ]; then
 	echo "Could not remove temporary directory $TEMP_DIR"
 	exit 24
-fi
-
-echo "Creating and installing u-boot.img for rockchip platform"
-"$TOOLS_PATH/loaderimage" --pack --uboot "${SOURCES_PATH}/u-boot-dtb.bin" "${DIST_PATH}/uboot.img" 0x61000000 >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not create uboot.img"
-	exit 18
-fi
-
-dd if="${DIST_PATH}/uboot.img" of="$LOOP_DEVICE" seek=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not install uboot.img"
-	exit 19
-fi
-
-echo "Creating and installing trustos.img for rockchip platform"
-"$TOOLS_PATH/loaderimage" --pack --trustos "${SOURCES_PATH}/rk322x_tee_ta_1.1.0-297-ga4fd2d1.bin" "${DIST_PATH}/trustos.img" 0x68400000 >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not create trustos.img"
-	exit 20
-fi
-
-dd if="${DIST_PATH}/trustos.img" of="$LOOP_DEVICE" seek=$((0x6000)) conv=sync,fsync >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not install trustos.img"
-	exit 21
-fi
-
-echo "Installing idbloader.img"
-
-dd if="${SOURCES_PATH}/idbloader.img" of="$LOOP_DEVICE" seek=$((0x40)) conv=sync,fsync >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not install idbloader.img"
-	exit 22
 fi
 
 echo "Unmounting loop device"

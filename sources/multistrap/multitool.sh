@@ -14,6 +14,11 @@ JUMPSTART_WARNING="Jump start for Armbian\n\nThis feature will install an altern
 on the NAND memory that allows Armbian pristine images to be run from SD card or USB devices\n\nNote that \
 your existing firmware will not boot anymore, so please be aware that you may want to do a backup first\n"
 
+STEPNAND_WARNING="steP-nand for Armbian\n\nThis feature will install a legacy U-boot bootloader \
+on the NAND memory that allows Armbian pristine images to be run directly from NAND devices\n\nNote that \
+must use an Armbian version which is compatible NAND device (ie: at the moment you must use legacy kernel \
+releases\n"
+
 CHOICE_FILE="/tmp/choice"
 
 FAT_PARTITION="/dev/mmcblk0p1"
@@ -162,7 +167,7 @@ function inform() {
 	TEXT=$1
 
 	dialog --backtitle "$BACKTITLE" \
-		--infobox "$TEXT" 7 60
+		--infobox "$TEXT" 12 74
 
 }
 
@@ -174,7 +179,7 @@ function inform_wait() {
 	TEXT=$1
 
 	dialog --backtitle "$BACKTITLE" \
-		--msgbox "$TEXT" 7 60
+		--msgbox "$TEXT" 12 74
 
 }
 
@@ -562,6 +567,156 @@ function do_burn() {
 
 }
 
+# Restore an image and burns it onto an eMMC device
+function do_install_stepnand() {
+
+	inform_wait "$STEPNAND_WARNING"
+
+	# Ask the user which device she wants to restore
+	TARGET_DEVICE=$(choose_mmc_device "Burn Armbian image via steP-nand" "Select destination device:" $DEVICES_MMC)
+
+	if [ $? -ne 0 ]; then
+		return 2 # User cancelled
+	fi
+
+	if [ -z "$TARGET_DEVICE" ]; then
+		return 2 # No restore device, user cancelled?
+	fi
+
+	BASENAME=$(basename $TARGET_DEVICE)
+	BLK_DEVICE=$(get_block_device $TARGET_DEVICE)
+	DEVICE_NAME=$(echo $BASENAME | cut -d ":" -f 1)
+
+	# Mount the fat partition
+	mount_fat_partition
+
+	if [ $? -ne 0 ]; then
+		inform_wait "There has been an error mounting the FAT partition."
+		unmount_fat_partition
+		return 1
+	fi
+
+	# Search the images path on the FAT partition
+	if [ ! -d "${MOUNT_POINT}/images" ]; then
+		unmount_fat_partition
+                inform_wait "There are no images on FAT partition."
+		return 3
+        fi
+
+	IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -type f -iname '*' 2>/dev/null | wc -l)
+	if [ $IMAGES_COUNT -eq 0 ]; then
+		unmount_fat_partition
+		inform_wait "There are no images on FAT partition."
+		return 3
+        fi
+
+	declare -a IMAGES
+	COUNTER=0
+	STR_IMAGES=""
+
+	for FILE in ${MOUNT_POINT}/images/*; do
+		IMAGES+=($FILE)
+		BASENAME=$(basename $FILE)
+		STR_IMAGES="$STR_IMAGES $COUNTER $BASENAME"
+		COUNTER=$(($COUNTER + 1))
+	done
+
+	dialog --backtitle "$BACKTITLE" \
+		--title "Burn Armbian image via steP-nand to $BLK_DEVICE" \
+		--menu "Choose the source image file" 20 60 18 \
+		$STR_IMAGES \
+		2> $CHOICE_FILE
+
+	if [ $? -ne 0 ]; then
+		unmount_fat_partition
+		return 2
+	fi
+
+	CHOICE=$(cat $CHOICE_FILE)
+	IMAGE_SOURCE=${IMAGES[$CHOICE]}
+	BASENAME=$(basename $IMAGE_SOURCE)
+
+	COMPRESSION_FORMAT=$(get_compression_format $IMAGE_SOURCE)
+
+	if [ $? -ne 0 ]; then
+
+		dialog --backtitle "$BACKTITLE" \
+			--yesno "Do you want to proceed to burn a RAW image?" 10 60
+
+		if [ $? -ne 0 ]; then
+			unmount_fat_partition
+			return 2
+		fi
+
+		COMPRESSION_FORMAT="raw"
+
+	fi
+
+	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE $COMPRESSION_FORMAT)
+
+	if [ $? -ne 0 ]; then
+
+		inform_wait "Unknown file format, cannot proceed"
+		unmount_fat_partition
+		return 1
+
+	fi
+
+	set_led_state "$DEVICE_NAME"
+
+	# Armbian rootfs must be copied from sector 0x2000, which is naturally allocated,
+	# to sector 0x8000 on NAND. That is so because the first 0x8000 sectors are used
+	# for legacy u-boot and trustos.
+	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" skip=8 seek=32 bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+		--backtitle "$BACKTITLE" \
+		--gauge "Burning image $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
+
+	ERR=$?
+
+	if [ $ERR -ne 0 ]; then
+		unmount_fat_partition
+		inform_wait "An error occurred ($ERR) while burning image, process has not been completed"
+		return 1
+	fi
+
+	inform "Installing legacy bootloader and creating GPT partitions, this will take a moment ..."
+
+	dd if="${MOUNT_POINT}/bsp/legacy-uboot.img" of="/dev/$BLK_DEVICE" bs=4M seek=1 oflag=direct >/dev/null 2>&1
+	ERR=$?
+
+	if [ $ERR -ne 0 ]; then
+		unmount_fat_partition
+		inform_wait "An error occurred ($ERR) while burning bootloader on device, process has not been completed"
+		return 1
+	fi
+
+	dd if="${MOUNT_POINT}/bsp/trustos.img" of="/dev/$BLK_DEVICE" bs=4M seek=2 oflag=direct >/dev/null 2>&1
+	ERR=$?
+
+	if [ $ERR -ne 0 ]; then
+		unmount_fat_partition
+		inform_wait "An error occurred ($ERR) while burning TEE on device, process has not been completed"
+		return 1
+	fi
+
+	# Create the GPT partition table and a partition starting from sector 0x8000
+	# TODO: fix the 2048M size with the real origin partition size
+	sgdisk --zap-all -n 0:32768:+2048M "/dev/$BLK_DEVICE" >/dev/null 2>&1
+	ERR=$?
+
+	if [ $ERR -ne 0 ]; then
+		unmount_fat_partition
+		inform_wait "An error occurred ($ERR) while creating GPT partition table, process has not been completed"
+		return 1
+	fi
+
+	unmount_fat_partition
+
+	inform_wait "Image has been burned to device $BLK_DEVICE"
+
+	return 0
+
+}
 
 function do_erase_mmc() {
 
@@ -697,6 +852,7 @@ MENU_ITEMS+=(3 "Erase flash")
 MENU_ITEMS+=(4 "Drop to Bash shell")
 MENU_ITEMS+=(5 "Burn image to flash")
 [[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(6 "Install Jump start on NAND")
+[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(7 "Install Armbian via steP-nand")
 MENU_ITEMS+=(8 "Reboot")
 MENU_ITEMS+=(9 "Shutdown")
 
@@ -722,6 +878,8 @@ while true; do
 		do_burn
 	elif [ $CHOICE -eq 6 ]; then
 		do_install_jump_start
+	elif [ $CHOICE -eq 7 ]; then
+		do_install_stepnand
 	elif [ $CHOICE -eq 8 ]; then
 		do_reboot
 	elif [ $CHOICE -eq 9 ]; then
