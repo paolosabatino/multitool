@@ -2,10 +2,15 @@
 
 TTY_CONSOLE="/dev/tty$(fgconsole)"
 
+# Taken from https://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
+
 BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
 
-RKNAND_WARNING="WARNING!!\n\nrknand device has been detected. Please be aware that, due to the \
+RED="\Z1"
+NC="\Z0"
+
+RKNAND_WARNING="${RED}WARNING!!${NC}\n\nrknand device has been detected. Please be aware that, due to the \
 limitations of the proprietary driver, all the functionalities of this software are \
 limited.\n\nYou will probably not able to backup and restore low-level loaders (idbloader) and not \
 able to install working images\n"
@@ -19,12 +24,19 @@ on the NAND memory that allows Armbian pristine images to be run directly from N
 must use an Armbian version which is compatible NAND device (ie: at the moment you must use legacy kernel \
 releases\n"
 
+IDBLOADER_SKIP_QUESTION="${RED}WARNING!!${NC}\n\nAn idbloader signature is present in the source image.\n\
+The current driver is not able to write idbloader sectors to NAND device\n\
+It is ${RED}heavily suggested${NC} to skip the idbloader sectors writing on NAND\n\n\
+Do you want to skip idbloader sectors?"
+
 CHOICE_FILE="/tmp/choice"
 
 FAT_PARTITION="/dev/mmcblk0p1"
 
 MOUNT_POINT="/mnt"
 WORK_LED="/sys/class/leds/led:state1"
+
+IDBLOADER_SIGNATURE=" 3b 8c dc fc be 9f 9d 51 eb 30 34 ce 24 51 1f 98"
 
 declare -a DEVICES_MMC
 declare -a DEVICES_SD
@@ -40,7 +52,7 @@ function find_mmc_devices() {
 	fi
 
 	for DEVICE in $SYS_MMC_PATH/*; do
-		DEVICE_TYPE=$(cat $DEVICE/type)
+		DEVICE_TYPE=$(cat $DEVICE/type 2>/dev/null)
 		if [ "$DEVICE_TYPE" = "MMC" ]; then
 			DEVICES_MMC+=($DEVICE)
 		elif [ "$DEVICE_TYPE" = "SD" ]; then
@@ -59,7 +71,7 @@ function find_special_devices() {
 
 	if [ -b "$SYS_RKNAND_BLK_DEV" ]; then
 
-		dialog --backtitle "$BACKTITLE" --msgbox "$RKNAND_WARNING" 0 0
+		inform_wait "$RKNAND_WARNING"
 
 		SYS_RKNAND_DEVICE=$(realpath /sys/block/rknand0/device)
 		DEVICES_MMC+=($SYS_RKNAND_DEVICE)
@@ -136,7 +148,7 @@ function choose_mmc_device() {
 	for IDX in ${!DEVICES[@]}; do
 		BASENAME=$(basename ${DEVICES[$IDX]})
 		BLKDEVICE=$(get_block_device ${DEVICES[$IDX]})
-		NAME=$(cat ${DEVICES[$IDX]}/name)
+		NAME=$(cat ${DEVICES[$IDX]}/name 2>/dev/null)
 		if [[ -n "$NAME" ]]; then
 			ARR_DEVICES+=($IDX "${BLKDEVICE} - $NAME ($BASENAME)")
 		else
@@ -144,7 +156,7 @@ function choose_mmc_device() {
 		fi
 	done
 
-	MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU_TITLE" 24 60 18)
+	MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU_TITLE" 24 74 18)
 
 	CHOICE=$("${MENU_CMD[@]}" "${ARR_DEVICES[@]}" 2>&1 >$TTY_CONSOLE)
 
@@ -166,7 +178,8 @@ function inform() {
 	
 	TEXT=$1
 
-	dialog --backtitle "$BACKTITLE" \
+	dialog --colors \
+		--backtitle "$BACKTITLE" \
 		--infobox "$TEXT" 12 74
 
 }
@@ -178,7 +191,8 @@ function inform_wait() {
 
 	TEXT=$1
 
-	dialog --backtitle "$BACKTITLE" \
+	dialog --colors \
+		--backtitle "$BACKTITLE" \
 		--msgbox "$TEXT" 12 74
 
 }
@@ -346,7 +360,7 @@ function do_restore() {
 	CHOICE=$(cat $CHOICE_FILE)
 	RESTORE_SOURCE=${BACKUPS[$CHOICE]}
 	BASENAME=$(basename $RESTORE_SOURCE)
-	DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size)
+	DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size 2>/dev/null)
         DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
 	
 	set_led_state "$DEVICE_NAME"
@@ -545,9 +559,36 @@ function do_burn() {
 
 	fi
 
+	SKIP_BLOCKS=0
+	SEEK_BLOCKS=0
+	IDBLOADER_SKIP=0
+
+	# If the block device is rknand*, we look the signature of the source image and
+	# in case we find the idbloader, we ask the user to skip the first 0x2000
+	# sectors
+	if [[ "$BLK_DEVICE" =~ "rknand" ]]; then
+
+		SIGNATURE=$(cat "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | od -A none -j $((0x40 * 0x200)) -N 16 -tx1)
+	
+		if [ "$SIGNATURE" = "$IDBLOADER_SIGNATURE" ]; then
+
+			dialog --colors \
+				--backtitle "$BACKTITLE" \
+				--yesno "$IDBLOADER_SKIP_QUESTION" 12 74	
+
+			if [ $? -eq 0 ]; then
+				SKIP_BLOCKS=8
+				SEEK_BLOCKS=8
+				IDBLOADER_SKIP=1
+			fi
+
+		fi
+
+	fi
+
 	set_led_state "$DEVICE_NAME"
 
-	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" skip=$SKIP_BLOCKS seek=$SEEK_BLOCKS bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
 		--gauge "Burning image $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
 
@@ -558,6 +599,32 @@ function do_burn() {
 		inform_wait "An error occurred ($ERR) while burning image, process has not been completed"
 		return 1
 	fi
+
+	inform "Restoring partition table and installing custom u-boot loader. This will take a moment..."
+
+	# In case idbloader is skipped, we also copy the first 64 sectors from the source image
+	# to restore the partition table. It should be safe.
+	if [ $IDBLOADER_SKIP -eq 1 ]; then
+
+		(cat "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" bs=32k count=1 iflag=fullblock oflag=direct 2>/dev/null)
+		ERR=$?
+
+		if [ $ERR -ne 0 ]; then
+			unmount_fat_partition
+			inform_wait "An error occurred ($ERR) while restoring partition table, image may not boot"
+			return 1
+		fi
+
+	fi
+
+	dd if="${MOUNT_POINT}/bsp/legacy-uboot.img" of="/dev/$BLK_DEVICE" bs=4M seek=1 oflag=direct >/dev/null 2>&1
+        ERR=$?
+
+        if [ $ERR -ne 0 ]; then
+                unmount_fat_partition
+                inform_wait "An error occurred ($ERR) while burning bootloader on device, image may not boot"
+                return 1
+        fi
 
 	unmount_fat_partition
 
@@ -700,8 +767,8 @@ function do_install_stepnand() {
 	fi
 
 	# Create the GPT partition table and a partition starting from sector 0x8000
-	# TODO: fix the 2048M size with the real origin partition size
-	sgdisk --zap-all -n 0:32768:+2048M "/dev/$BLK_DEVICE" >/dev/null 2>&1
+	# TODO: fix the 3G size with the real origin partition size
+	sgdisk --zap-all -n 0:32768:+3G "/dev/$BLK_DEVICE" >/dev/null 2>&1
 	ERR=$?
 
 	if [ $ERR -ne 0 ]; then
