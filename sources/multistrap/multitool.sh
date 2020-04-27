@@ -600,11 +600,11 @@ function do_burn() {
 		return 1
 	fi
 
-	inform "Restoring partition table and installing custom u-boot loader. This will take a moment..."
-
 	# In case idbloader is skipped, we also copy the first 64 sectors from the source image
 	# to restore the partition table. It should be safe.
 	if [ $IDBLOADER_SKIP -eq 1 ]; then
+
+		inform "Restoring partition table and installing custom u-boot loader. This will take a moment..."
 
 		(cat "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" bs=32k count=1 iflag=fullblock oflag=direct 2>/dev/null)
 		ERR=$?
@@ -615,16 +615,16 @@ function do_burn() {
 			return 1
 		fi
 
+		dd if="${MOUNT_POINT}/bsp/legacy-uboot.img" of="/dev/$BLK_DEVICE" bs=4M seek=1 oflag=direct >/dev/null 2>&1
+	        ERR=$?
+
+        	if [ $ERR -ne 0 ]; then
+                	unmount_fat_partition
+	                inform_wait "An error occurred ($ERR) while burning bootloader on device, image may not boot"
+        	        return 1
+	        fi
+
 	fi
-
-	dd if="${MOUNT_POINT}/bsp/legacy-uboot.img" of="/dev/$BLK_DEVICE" bs=4M seek=1 oflag=direct >/dev/null 2>&1
-        ERR=$?
-
-        if [ $ERR -ne 0 ]; then
-                unmount_fat_partition
-                inform_wait "An error occurred ($ERR) while burning bootloader on device, image may not boot"
-                return 1
-        fi
 
 	unmount_fat_partition
 
