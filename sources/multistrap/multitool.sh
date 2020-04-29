@@ -172,6 +172,41 @@ function choose_mmc_device() {
 
 }
 
+# Shows a menu of files given title as first argument, the menu title as second argument
+# and the full path with glob as third argument
+function choose_file() {
+
+	declare -a FILES
+	declare -a STR_FILES
+
+	TITLE="$1"
+	MENU_TITLE="$2"
+	GLOB="$3"
+
+        COUNTER=0
+
+        for FILE in $GLOB; do
+                FILES+=($FILE)
+                BASENAME=$(basename $FILE)
+		STR_FILES+=($COUNTER "$BASENAME")
+                COUNTER=$(($COUNTER + 1))
+        done
+
+	MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU_TITLE" 24 0 18)
+
+	CHOICE=$("${MENU_CMD[@]}" "${STR_FILES[@]}" 2>&1 >$TTY_CONSOLE)
+
+	# No choice, return error code 1
+	if [ $? -ne 0 ]; then 
+		return 1
+	fi
+
+	echo ${FILES[$CHOICE]}
+
+	return 0
+	
+}
+
 # Function to inform the user, but does not wait for its ok (returns immediately)
 # First argument is the text
 function inform() {
@@ -335,30 +370,13 @@ function do_restore() {
 		return 3
         fi
 
-	declare -a BACKUPS
-	COUNTER=0
-	STR_BACKUPS=""
-
-	for FILE in ${MOUNT_POINT}/backups/*.gz; do
-		BACKUPS+=($FILE)
-		BASENAME=$(basename $FILE)
-		STR_BACKUPS="$STR_BACKUPS $COUNTER $BASENAME"
-		COUNTER=$(($COUNTER + 1))
-	done
-
-	dialog --backtitle "$BACKTITLE" \
-		--title "Restore a backup file to $BLK_DEVICE" \
-		--menu "Choose a backup file" 20 60 18 \
-		$STR_BACKUPS \
-		2> $CHOICE_FILE
+	RESTORE_SOURCE=$(choose_file "Restore a backup image to $BLK_DEVICE" "Choose a backup image" "${MOUNT_POINT}/backups/*.gz")
 
 	if [ $? -ne 0 ]; then
 		unmount_fat_partition
 		return 2
 	fi
 
-	CHOICE=$(cat $CHOICE_FILE)
-	RESTORE_SOURCE=${BACKUPS[$CHOICE]}
 	BASENAME=$(basename $RESTORE_SOURCE)
 	DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size 2>/dev/null)
         DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
@@ -507,30 +525,13 @@ function do_burn() {
 		return 3
         fi
 
-	declare -a IMAGES
-	COUNTER=0
-	STR_IMAGES=""
-
-	for FILE in ${MOUNT_POINT}/images/*; do
-		IMAGES+=($FILE)
-		BASENAME=$(basename $FILE)
-		STR_IMAGES="$STR_IMAGES $COUNTER $BASENAME"
-		COUNTER=$(($COUNTER + 1))
-	done
-
-	dialog --backtitle "$BACKTITLE" \
-		--title "Burn an image to $BLK_DEVICE" \
-		--menu "Choose the source image file" 20 60 18 \
-		$STR_IMAGES \
-		2> $CHOICE_FILE
+	IMAGE_SOURCE=$(choose_file "Burn an image to $BLK_DEVICE" "Choose the source image file" "${MOUNT_POINT}/images/*")
 
 	if [ $? -ne 0 ]; then
 		unmount_fat_partition
 		return 2
 	fi
 
-	CHOICE=$(cat $CHOICE_FILE)
-	IMAGE_SOURCE=${IMAGES[$CHOICE]}
 	BASENAME=$(basename $IMAGE_SOURCE)
 
 	COMPRESSION_FORMAT=$(get_compression_format $IMAGE_SOURCE)
@@ -677,30 +678,13 @@ function do_install_stepnand() {
 		return 3
         fi
 
-	declare -a IMAGES
-	COUNTER=0
-	STR_IMAGES=""
-
-	for FILE in ${MOUNT_POINT}/images/*; do
-		IMAGES+=($FILE)
-		BASENAME=$(basename $FILE)
-		STR_IMAGES="$STR_IMAGES $COUNTER $BASENAME"
-		COUNTER=$(($COUNTER + 1))
-	done
-
-	dialog --backtitle "$BACKTITLE" \
-		--title "Burn Armbian image via steP-nand to $BLK_DEVICE" \
-		--menu "Choose the source image file" 20 60 18 \
-		$STR_IMAGES \
-		2> $CHOICE_FILE
+	IMAGE_SOURCE=$(choose_file "Burn Armbian image via steP-nand to $BLK_DEVICE" "Choose the source image file" "${MOUNT_POINT}/images/*")
 
 	if [ $? -ne 0 ]; then
 		unmount_fat_partition
 		return 2
 	fi
 
-	CHOICE=$(cat $CHOICE_FILE)
-	IMAGE_SOURCE=${IMAGES[$CHOICE]}
 	BASENAME=$(basename $IMAGE_SOURCE)
 
 	COMPRESSION_FORMAT=$(get_compression_format $IMAGE_SOURCE)
@@ -766,8 +750,14 @@ function do_install_stepnand() {
 		return 1
 	fi
 
+	sync
+	sleep 1
+
 	# Create the GPT partition table and a partition starting from sector 0x8000
+	# Note: we need to manually clear the MBR because sgdisk complaints if it finds
+	# an existing partition table, even with --zap-all argument
 	# TODO: fix the 3G size with the real origin partition size
+	dd if=/dev/zero of="/dev/$BLK_DEVICE" bs=32k count=1 >/dev/null 2>&1
 	sgdisk --zap-all -n 0:32768:+3G "/dev/$BLK_DEVICE" >/dev/null 2>&1
 	ERR=$?
 
