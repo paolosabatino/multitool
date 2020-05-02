@@ -757,7 +757,8 @@ function do_install_stepnand() {
 	# Note: we need to manually clear the MBR because sgdisk complaints if it finds
 	# an existing partition table, even with --zap-all argument
 	# TODO: fix the 3G size with the real origin partition size
-	dd if=/dev/zero of="/dev/$BLK_DEVICE" bs=32k count=1 >/dev/null 2>&1
+	dd if=/dev/zero of="/dev/$BLK_DEVICE" bs=32k count=1 conv=sync,fsync >/dev/null 2>&1
+	sgdisk -o "/dev/$BLK_DEVICE"
 	sgdisk --zap-all -n 0:32768:+3G "/dev/$BLK_DEVICE" >/dev/null 2>&1
 	ERR=$?
 
