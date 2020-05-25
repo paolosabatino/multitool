@@ -7,3 +7,5 @@ To compile. apply the patches to rockchip u-boot 2017.09, then:
 - make rk322x-box_defconfig
 
 - make -j4
+
+Then take u-boot-dtb.bin and copy as legacy-rk-uboot.bin in sources directory
