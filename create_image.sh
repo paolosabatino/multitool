@@ -16,6 +16,28 @@ if [ "$USERID" != "0" ]; then
 	exit 26
 fi
 
+TARGET_CONF="$1"
+
+if [ -z "$TARGET_CONF" ]; then
+	echo "Please specify a target configuration"
+	exit 40
+fi
+
+if [ ! -f "${SOURCES_PATH}/${TARGET_CONF}.conf" ]; then
+	echo "Could not find ${TARGET_CONF}.conf target configuration file"
+	exit 42
+fi
+
+. "${SOURCES_PATH}/${TARGET_CONF}.conf"
+
+if [ $? -ne 0 ]; then
+	echo "Could not source ${TARGET_CONF}.conf"
+	exit 41
+fi
+
+# Target-specific sources path
+TS_SOURCES_PATH="$CWD/sources/${TARGET_CONF}"
+
 mkdir -p "$DIST_PATH"
 
 if [ ! -f "$DIST_PATH/root.img" ]; then
@@ -143,7 +165,7 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Creating and installing u-boot.img for rockchip platform"
-"$TOOLS_PATH/loaderimage" --pack --uboot "${SOURCES_PATH}/u-boot-dtb.bin" "${DIST_PATH}/uboot.img" 0x61000000 >/dev/null 2>&1
+"$TOOLS_PATH/loaderimage" --pack --uboot "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img" $UBOOT_ADDR >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Could not create uboot.img"
@@ -157,32 +179,38 @@ if [ $? -ne 0 ]; then
 	exit 19
 fi
 
-echo "Creating and installing trustos.img for rockchip platform"
-"$TOOLS_PATH/loaderimage" --pack --trustos "${SOURCES_PATH}/rk322x_tee_ta_1.1.0-297-ga4fd2d1.bin" "${DIST_PATH}/trustos.img" 0x68400000 >/dev/null 2>&1
+if [ -n "$TRUST_OS" ]; then
+	echo "Creating and installing trustos.img for rockchip platform"
+	"$TOOLS_PATH/loaderimage" --pack --trustos "${TS_SOURCES_PATH}/${TRUST_OS}" "${DIST_PATH}/trustos.img" $TRUST_ADDR >/dev/null 2>&1
 
-if [ $? -ne 0 ]; then
-	echo "Could not create trustos.img"
-	exit 20
+	if [ $? -ne 0 ]; then
+		echo "Could not create trustos.img"
+		exit 20
+	fi
 fi
 
-echo "Creating legacy u-boot for rockchip platform"
-"$TOOLS_PATH/loaderimage" --pack --uboot "${SOURCES_PATH}/legacy-rk-uboot.bin" "${DIST_PATH}/legacy-uboot.img" 0x60200000 >/dev/null 2>&1
+if [ -n "$LEGACY_UBOOT_IMAGE" ]; then
+	echo "Creating legacy u-boot for rockchip platform"
+	"$TOOLS_PATH/loaderimage" --pack --uboot "${TS_SOURCES_PATH}/${LEGACY_UBOOT_IMAGE}" "${DIST_PATH}/legacy-uboot.img" $LEGACY_UBOOT_ADDR >/dev/null 2>&1
 
-if [ $? -ne 0 ]; then
-	echo "Could not pack legacy rockchip u-boot"
-	exit 32
+	if [ $? -ne 0 ]; then
+		echo "Could not pack legacy rockchip u-boot"
+		exit 32
+	fi
 fi
 
-dd if="${DIST_PATH}/trustos.img" of="$LOOP_DEVICE" seek=$((0x6000)) conv=sync,fsync >/dev/null 2>&1
+if [ -f "${DIST_PATH}/trustos.img" ]; then
+	dd if="${DIST_PATH}/trustos.img" of="$LOOP_DEVICE" seek=$((0x6000)) conv=sync,fsync >/dev/null 2>&1
 
-if [ $? -ne 0 ]; then
-	echo "Could not install trustos.img"
-	exit 21
+	if [ $? -ne 0 ]; then
+		echo "Could not install trustos.img"
+		exit 21
+	fi
 fi
 
 echo "Installing idbloader.img"
 
-dd if="${SOURCES_PATH}/idbloader.img" of="$LOOP_DEVICE" seek=$((0x40)) conv=sync,fsync >/dev/null 2>&1
+dd if="${TS_SOURCES_PATH}/${IDBLOADER}" of="$LOOP_DEVICE" seek=$((0x40)) conv=sync,fsync >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Could not install idbloader.img"
@@ -213,13 +241,13 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Populating partition"
-cp "${SOURCES_PATH}/kernel.img" "${TEMP_DIR}/kernel.img" > /dev/null 2>&1
+cp "${TS_SOURCES_PATH}/${KERNEL_IMAGE}" "${TEMP_DIR}/kernel.img" > /dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not copy kernel"
 	exit 10
 fi
 
-cp "${SOURCES_PATH}/rk322x-box.dtb" "${TEMP_DIR}/rk322x-box.dtb" >/dev/null 2>&1
+cp "${TS_SOURCES_PATH}/${DEVICE_TREE}" "${TEMP_DIR}/${DEVICE_TREE}" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not copy device tree"
 	exit 12
@@ -231,7 +259,7 @@ if [ $? -ne 0 ]; then
 	exit 13
 fi
 
-cp "${SOURCES_PATH}/extlinux.conf" "${TEMP_DIR}/extlinux/extlinux.conf" >/dev/null 2>&1
+cp "${TS_SOURCES_PATH}/extlinux.conf" "${TEMP_DIR}/extlinux/extlinux.conf" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not copy extlinux.conf"
 	exit 14
@@ -256,14 +284,10 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Copying board support package blobs into bsp directory"
-cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img" && \
-cp "${DIST_PATH}/trustos.img" "${TEMP_DIR}/bsp/trustos.img" && \
-cp "${DIST_PATH}/legacy-uboot.img" "${TEMP_DIR}/bsp/legacy-uboot.img"
+cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"
 
-if [ $? -ne 0 ]; then
-	echo "Could not copy bsp files"
-	exit 33
-fi
+[[ -f "${DIST_PATH}/trustos.img" ]] && cp "${DIST_PATH}/trustos.img" "${TEMP_DIR}/bsp/trustos.img"
+[[ -f "${DIST_PATH}/legacy-uboot.img" ]] && cp "${DIST_PATH}/legacy-uboot.img" "${TEMP_DIR}/bsp/legacy-uboot.img"
 
 PARTITION_UUID=$(lsblk -n -o UUID $FAT_PARTITION)
 if [ $? -ne 0 ]; then
