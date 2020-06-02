@@ -1,11 +1,8 @@
 #!/bin/bash
 
 CWD=$(pwd)
-DIST_PATH="$CWD/dist"
 SOURCES_PATH="$CWD/sources"
 TOOLS_PATH="$CWD/tools"
-
-DEST_IMAGE="$DIST_PATH/multitool.img"
 
 # Script to create the multitool image for rk322x boards
 
@@ -37,6 +34,10 @@ fi
 
 # Target-specific sources path
 TS_SOURCES_PATH="$CWD/sources/${TARGET_CONF}"
+
+# Destination path and image
+DIST_PATH="${CWD}/dist-${TARGET_CONF}"
+DEST_IMAGE="${DIST_PATH}/multitool.img"
 
 mkdir -p "$DIST_PATH"
 

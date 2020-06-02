@@ -1,2 +1,2 @@
-dist
+dist-*
 sources/multistrap/rootfs/
