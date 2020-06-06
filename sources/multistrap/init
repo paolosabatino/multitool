@@ -6,7 +6,7 @@ mount -t tmpfs /tmp /tmp
 mount -t proc /proc /proc
 
 # Spawn a shell on ttyS2 serial port, always available
-getty --autologin root ttyS2 &
+setsid getty --autologin root ttyS2 &
 
 # Check if the fat partition requires a resize
 BOOT_DEVICE="mmcblk0"
@@ -47,9 +47,11 @@ if [ -b "/dev/${BOOT_DEVICE}${FAT_PARTITION}" ]; then
 fi
 
 if [ -f /usr/local/bin/multitool.sh ]; then
-	/bin/bash /usr/local/bin/multitool.sh <> /dev/tty1 >&0 2>&1	
+	while true; do
+		setsid /bin/bash /usr/local/bin/multitool.sh <> /dev/tty1 >&0 2>&1	
+	done
 fi
 
 while true; do
-	getty --autologin root tty1
+	setsid getty --autologin root tty1
 done

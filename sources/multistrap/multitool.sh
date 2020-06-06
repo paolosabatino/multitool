@@ -7,8 +7,10 @@ TTY_CONSOLE="/dev/tty$(fgconsole)"
 BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
 
+BOLD="\Zb"
 RED="\Z1"
 NC="\Z0"
+RESET="\Zn"
 
 RKNAND_WARNING="${RED}WARNING!!${NC}\n\nrknand device has been detected. Please be aware that, due to the \
 limitations of the proprietary driver, all the functionalities of this software are \
@@ -449,6 +451,8 @@ function get_compression_format() {
 # Given a file as first argument, returns the decompressor command line
 # also exit code is 0 if the decompressor supports input file from stdin
 # otherwise returns 1
+# Also populates D_FORMAT, D_COMMAND_LINE, D_REAL_FILE and D_ERROR_TEXT
+# global variables to be used by the caller
 function get_decompression_cli() {
 
 	local TARGET=$1
@@ -459,7 +463,6 @@ function get_decompression_cli() {
 	local FORMAT
 	local TAR_FORMAT_SWITCH
 
-
 	# 7z archive
 
 	FILES_LIST=$(7zr l -t7z "$TARGET" 2>/dev/null)
@@ -469,15 +472,14 @@ function get_decompression_cli() {
 		CANDIDATE_STR=$(grep -m 1 -i -e ".img$" <<< $FILES_LIST)
 
 		if [[ "$CANDIDATE_STR" = "" ]]; then
-			ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
+			D_ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
 			return 1
 		fi
 
 		CANDIDATE_UNCOMPRESSED_SIZE=$(echo $CANDIDATE_STR | cut -d " " -f 4)
 		CANDIDATE_IMAGE=$(echo $CANDIDATE_STR | cut -d " " -f 6)
 
-		echo "7zr e -bb0 -bd -so -mmt4 '$TARGET' '$CANDIDATE_IMAGE' | pv -n -s $CANDIDATE_UNCOMPRESSED_SIZE"
-
+		D_COMMAND_LINE="7zr e -bb0 -bd -so -mmt4 '$TARGET' '$CANDIDATE_IMAGE' | pv -n -s $CANDIDATE_UNCOMPRESSED_SIZE"
 		D_FORMAT="7z archive"
 		D_REAL_FILE="$CANDIDATE_IMAGE"
 
@@ -494,15 +496,14 @@ function get_decompression_cli() {
 		CANDIDATE_STR=$(grep -m 1 -i -e ".img$" <<< $FILES_LIST)
 
 		if [[ "$CANDIDATE_STR" = "" ]]; then
-			ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
+			D_ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
 			return 1
 		fi
 
 		CANDIDATE_UNCOMPRESSED_SIZE=$(echo $CANDIDATE_STR | cut -d " " -f 1)
 		CANDIDATE_IMAGE=$(echo $CANDIDATE_STR | cut -d " " -f 4)
 
-		echo "unzip -e -p '$TARGET' '$CANDIDATE_IMAGE' | pv -n -s $CANDIDATE_UNCOMPRESSED_SIZE"
-
+		D_COMMAND_LINE="unzip -e -p '$TARGET' '$CANDIDATE_IMAGE' | pv -n -s $CANDIDATE_UNCOMPRESSED_SIZE"
 		D_FORMAT="zip archive"
 		D_REAL_FILE="$CANDIDATE_IMAGE"
 
@@ -512,7 +513,7 @@ function get_decompression_cli() {
 
 	# Try to understand if it is a common unix file format.
 	# The function returns 0 if a known format has been found, 1 if not
-	FORMAT=$(get_decompression_format $TARGET)
+	FORMAT=$(get_compression_format $TARGET)
 
 	if [[ $? -eq 0 ]]; then
 
@@ -520,7 +521,7 @@ function get_decompression_cli() {
 		# If so, this is a tar archive in the detected format, thus we find an .img
 		# file and select it as the target image
 
-		FILES_LIST=$(tar taf "$TARGET" 2>dev/null)
+		FILES_LIST=$(tar taf "$TARGET" 2>/dev/null)
 
 		if [[ $? -eq 0 ]]; then
 
@@ -538,13 +539,7 @@ function get_decompression_cli() {
 			[[ "$FORMAT" = "bzip2" ]] && TAR_FMT_SWITCH="-j"
 			[[ "$FORMAT" = "lzma" ]] && TAR_FMT_SWITCH="--lzma"
 
-			if [[ -z "$TAR_FMT_SWITCH" ]]; then
-				D_ERROR_TEXT="$ERROR_TAR_UNKNOWN_FORMAT"
-				return 1
-			fi
-
-			echo "pv -n '$TARGET' | tar -O -x ${TAR_FMT_SWITCH} -f - '$CANDIDATE_IMAGE'"
-
+			D_COMMAND_LINE="pv -n '$TARGET' | tar -O -x ${TAR_FMT_SWITCH} -f - '$CANDIDATE_IMAGE'"
 			D_FORMAT="tar archive"
 			D_REAL_FILE="$CANDIDATE_IMAGE"
 
@@ -553,32 +548,32 @@ function get_decompression_cli() {
 		fi
 
 		if [[ "$FORMAT" = "gzip" ]]; then
-			echo "pv -n '$TARGET' | pigz -d"
+			D_COMMAND_LINE="pv -n '$TARGET' | pigz -d"
 			D_FORMAT="gzip compressed image"
 			return 0
 		fi
 
 		if [[ "$FORMAT" = "xz" ]]; then
-			echo "pv -n '$TARGET' | xz -d -T4"
+			D_COMMAND_LINE="pv -n '$TARGET' | xz -d -T4"
 			D_FORMAT="xz compressed image"
 			return 0
 		fi
 
 		if [[ "$FORMAT" = "bzip2" ]]; then
-			echo "pv -n '$TARGET' | bzip2 -d -c"
+			D_COMMAND_LINE="pv -n '$TARGET' | bzip2 -d -c"
 			D_FORMAT="bzip2 compressed image"
 			return 0
 		fi
 
 		if [[ "$FORMAT" = "lzma" ]]; then
-			echo "pv -n '$TARGET' | lzma -d -c"
+			D_COMMAND_LINE="pv -n '$TARGET' | lzma -d -c"
 			D_FORMAT="lzma compressed image"
 			return 0
 		fi
 
 	fi
 
-	echo "pv -n '$TARGET'"
+	D_COMMAND_LINE="pv -n '$TARGET'"
 	D_FORMAT="raw image"
 
 	return 0
@@ -641,10 +636,13 @@ function do_burn() {
 
 	BASENAME=$(basename $IMAGE_SOURCE)
 
-	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE)
+	inform "Scanning the source image file, this could take a while, please wait..."
+
+	get_decompression_cli $IMAGE_SOURCE
 
 	if [[ $? -ne 0 ]]; then
 		inform_wait "$D_ERROR_TEXT"
+		unmount_fat_partition
 		return 1
 	fi
 
@@ -657,7 +655,7 @@ function do_burn() {
 	# sectors
 	if [[ "$BLK_DEVICE" =~ "rknand" ]]; then
 
-		SIGNATURE_CLI="$DECOMPRESSION_CLI | od -A none -j $((0x40 * 0x200)) -N 16 -tx1"
+		SIGNATURE_CLI="$D_COMMAND_LINE | od -A none -j $((0x40 * 0x200)) -N 16 -tx1"
 		SIGNATURE=$(eval "$SIGNATURE_CLI" 2>/dev/null)
 	
 		if [ "$SIGNATURE" = "$IDBLOADER_SIGNATURE" ]; then
@@ -678,18 +676,18 @@ function do_burn() {
 
 	set_led_state "$DEVICE_NAME"
 
-	OPERATION_CLI="$DECOMPRESSION_CLI | dd of='/dev/$BLK_DEVICE' skip=$SKIP_BLOCKS seek=$SEEK_BLOCKS bs=512K iflag=fullblock oflag=direct 2>/dev/null"
+	OPERATION_CLI="$D_COMMAND_LINE | dd of='/dev/$BLK_DEVICE' skip=$SKIP_BLOCKS seek=$SEEK_BLOCKS bs=512K iflag=fullblock oflag=direct 2>/dev/null"
 
-	if [[ "$D_REAL_FILE" = "" ]]; then
-		OPERATION_TEXT="Source archive: $BASENAME\nSource format: $D_FORMAT\nImage file: $D_REAL_FILE\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+	if [[ -n "$D_REAL_FILE" ]]; then
+		OPERATION_TEXT="${BOLD}Source archive:${RESET} $BASENAME\n${BOLD}Source format:${RESET} $D_FORMAT\n${BOLD}Image file:${RESET} $D_REAL_FILE\n${BOLD}Destination:${RESET} $BLK_DEVICE\n\nOperation in progress, please wait..."
 	else
-		OPERATION_TEXT="Image file $BASENAME\nSource format: $D_FORMAT\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+		OPERATION_TEXT="${BOLD}Image file:${RESET} $BASENAME\n${BOLD}Source format:${RESET} $D_FORMAT\n${BOLD}Destination:${RESET} $BLK_DEVICE\n\nOperation in progress, please wait..."
 	fi
 
-
 	(eval "$OPERATION_CLI") 2>&1 | dialog \
+		--colors \
 		--backtitle "$BACKTITLE" \
-		--gauge "$OPERATION_TEXT" 10 70 0
+		--gauge "$OPERATION_TEXT" 18 70 0
 
 	ERR=$?
 
@@ -705,7 +703,7 @@ function do_burn() {
 
 		inform "Restoring partition table and installing custom u-boot loader. This will take a moment..."
 		
-		OPERATION_CLI="$DECOMPRESSION_CLI 2>/dev/null | dd of='/dev/$BLK_DEVICE' bs=32k count=1 iflag=fullblock oflag=direct 2>/dev/null"
+		OPERATION_CLI="$D_COMMAND_LINE 2>/dev/null | dd of='/dev/$BLK_DEVICE' bs=32k count=1 iflag=fullblock oflag=direct 2>/dev/null"
 		(eval "$OPERATION_CLI")
 
 		ERR=$?
@@ -787,10 +785,13 @@ function do_install_stepnand() {
 
 	BASENAME=$(basename $IMAGE_SOURCE)
 
-	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE)
+	inform "Scanning the source image file, this could take a while, please wait..."
+
+	get_decompression_cli $IMAGE_SOURCE
 
 	if [[ $? -ne 0 ]]; then
 		inform_wait "$D_ERROR_TEXT"
+		unmount_fat_partition
 		return 1
 	fi
 
@@ -799,17 +800,18 @@ function do_install_stepnand() {
 	# Armbian rootfs must be copied from sector 0x2000, which is naturally allocated,
 	# to sector 0x8000 on NAND. That is so because the first 0x8000 sectors are used
 	# for legacy u-boot and trustos.
-	OPERATION_CLI="$DECOMPRESSION_CLI | dd of='/dev/$BLK_DEVICE' skip=8 seek=32 bs=512K iflag=fullblock oflag=direct 2>/dev/null"
+	OPERATION_CLI="$D_COMMAND_LINE | dd of='/dev/$BLK_DEVICE' skip=8 seek=32 bs=512K iflag=fullblock oflag=direct 2>/dev/null"
 
-	if [[ "$D_REAL_FILE" = "" ]]; then
-		OPERATION_TEXT="Source archive: $BASENAME\nSource format: $D_FORMAT\nImage file: $D_REAL_FILE\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+	if [[ -n "$D_REAL_FILE" ]]; then
+		OPERATION_TEXT="${BOLD}Source archive:${RESET} $BASENAME\n${BOLD}Source format:${RESET} $D_FORMAT\n${BOLD}Image file:${RESET} $D_REAL_FILE\n${BOLD}Destination:${RESET} $BLK_DEVICE\n\nOperation in progress, please wait..."
 	else
-		OPERATION_TEXT="Image file $BASENAME\nSource format: $D_FORMAT\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+		OPERATION_TEXT="${BOLD}Image file:${RESET} $BASENAME\n${BOLD}Source format:${RESET} $D_FORMAT\n${BOLD}Destination:${RESET} $BLK_DEVICE\n\nOperation in progress, please wait..."
 	fi
 
 	(eval "$OPERATION_CLI") 2>&1 | dialog \
+		--colors \
 		--backtitle "$BACKTITLE" \
-		--gauge "$OPERATION_TEXT" 10 70 0
+		--gauge "$OPERATION_TEXT" 18 70 0
 
 	ERR=$?
 
