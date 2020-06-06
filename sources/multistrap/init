@@ -39,7 +39,7 @@ if [ -b "/dev/${BOOT_DEVICE}${FAT_PARTITION}" ]; then
 		ERR=$?
 
 		if [ $ERR -ne 0 ]; then
-			dialog --msgbox "Could not resize FAT partition, error 34 occurred" 7 60 <> /dev/tty1 >&0 2>&1
+			dialog --msgbox "Could not resize FAT partition, error $ERR occurred" 7 60 <> /dev/tty1 >&0 2>&1
 		fi
 
 	fi

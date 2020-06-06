@@ -83,7 +83,8 @@ cd "$CWD"
 echo "-> rootfs size: ${ROOTFS_SIZE}kb"
 
 echo "Creating empty image in $DEST_IMAGE"
-dd if=/dev/zero of="$DEST_IMAGE" bs=1M count=1024 conv=sync,fsync >/dev/null 2>&1
+#dd if=/dev/zero of="$DEST_IMAGE" bs=1M count=1024 conv=sync,fsync >/dev/null 2>&1
+fallocate -l 1G "$DEST_IMAGE" >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Error while creating $DEST_IMAGE empty file"
@@ -105,7 +106,7 @@ if [ $? -ne 0 ]; then
 	exit 3
 fi
 
-START=$((0x8000))
+START=$BEGIN_USER_PARTITIONS
 END=$(($START + $ROOTFS_SECTORS - 1))
 parted -s -- "$LOOP_DEVICE" unit s mkpart primary fat32 $(($END + 1)) -1s >/dev/null 2>&1
 if [ $? -ne 0 ]; then
@@ -165,58 +166,8 @@ if [ $? -ne 0 ]; then
 	exit 27
 fi
 
-echo "Creating and installing u-boot.img for rockchip platform"
-"$TOOLS_PATH/loaderimage" --pack --uboot "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img" $UBOOT_ADDR >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not create uboot.img"
-	exit 18
-fi
-
-dd if="${DIST_PATH}/uboot.img" of="$LOOP_DEVICE" seek=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not install uboot.img"
-	exit 19
-fi
-
-if [ -n "$TRUST_OS" ]; then
-	echo "Creating and installing trustos.img for rockchip platform"
-	"$TOOLS_PATH/loaderimage" --pack --trustos "${TS_SOURCES_PATH}/${TRUST_OS}" "${DIST_PATH}/trustos.img" $TRUST_ADDR >/dev/null 2>&1
-
-	if [ $? -ne 0 ]; then
-		echo "Could not create trustos.img"
-		exit 20
-	fi
-fi
-
-if [ -n "$LEGACY_UBOOT_IMAGE" ]; then
-	echo "Creating legacy u-boot for rockchip platform"
-	"$TOOLS_PATH/loaderimage" --pack --uboot "${TS_SOURCES_PATH}/${LEGACY_UBOOT_IMAGE}" "${DIST_PATH}/legacy-uboot.img" $LEGACY_UBOOT_ADDR >/dev/null 2>&1
-
-	if [ $? -ne 0 ]; then
-		echo "Could not pack legacy rockchip u-boot"
-		exit 32
-	fi
-fi
-
-if [ -f "${DIST_PATH}/trustos.img" ]; then
-	dd if="${DIST_PATH}/trustos.img" of="$LOOP_DEVICE" seek=$((0x6000)) conv=sync,fsync >/dev/null 2>&1
-
-	if [ $? -ne 0 ]; then
-		echo "Could not install trustos.img"
-		exit 21
-	fi
-fi
-
-echo "Installing idbloader.img"
-
-dd if="${TS_SOURCES_PATH}/${IDBLOADER}" of="$LOOP_DEVICE" seek=$((0x40)) conv=sync,fsync >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not install idbloader.img"
-	exit 22
-fi
+# ---- boot install -----
+source "${TS_SOURCES_PATH}/boot_install"
 
 echo "Formatting FAT32 partition"
 mkfs.vfat "$FAT_PARTITION" >/dev/null 2>&1
@@ -330,6 +281,8 @@ if [ $? -ne 0 ]; then
 	echo "Could not unmount $LOOP_DEVICE"
 	exit 23
 fi
+
+truncate -s 128M "$DEST_IMAGE"
 
 sync
 

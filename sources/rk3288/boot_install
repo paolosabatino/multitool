@@ -1,0 +1,87 @@
+#!/bin/bash
+
+dd if="${TS_SOURCES_PATH}/${IDBLOADER}" of="$LOOP_DEVICE" seek=$((0x40)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install idbloader.img"
+	exit 22
+fi
+
+echo "Packing parameter image for rk3288 platform"
+"${TOOLS_PATH}/rkcrc" -p "${TS_SOURCES_PATH}/parameter-linux.img" "${DIST_PATH}/parameter-linux.img.rkcrc" 
+
+if [ $? -ne 0 ]; then
+	echo "Could not add CRC to parameter-linux.img"
+	exit 18
+fi
+
+dd if="${DIST_PATH}/parameter-linux.img.rkcrc" of="$LOOP_DEVICE" seek=$((0x2000)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install parameter-linux.img.rkcrc"
+	exit 22
+fi
+
+echo "Packing device tree for rk3288 platform"
+"${TOOLS_PATH}/resource_tool" --image="${DIST_PATH}/resource.img" --pack "${TS_SOURCES_PATH}/rk3288-box.dtb"
+
+if [ $? -ne 0 ]; then
+	echo "Could not pack device tree with resource_tool"
+	exit 18
+fi
+
+dd if="${DIST_PATH}/resource.img" of="$LOOP_DEVICE" seek=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install resource.img.rkcrc"
+	exit 22
+fi
+
+
+echo "Packing kernel image for rk3288 platform"
+"${TOOLS_PATH}/rkcrc" -k "${TS_SOURCES_PATH}/kernel.img" "${DIST_PATH}/kernel.img.rkcrc" >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not add CRC to kernel.img"
+	exit 18
+fi
+
+dd if="${DIST_PATH}/kernel.img.rkcrc" of="$LOOP_DEVICE" seek=$((0xc000)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install kernel.img.rkcrc"
+	exit 22
+fi
+
+
+echo "Packing initrd image for rk3288 platform"
+"${TOOLS_PATH}/rkcrc" -k "${TS_SOURCES_PATH}/initrd.img" "${DIST_PATH}/initrd.img.rkcrc" >/dev/null 2>&1
+
+
+if [ $? -ne 0 ]; then
+	echo "Could not add CRC to initrd.img"
+	exit 18
+fi
+
+dd if="${DIST_PATH}/initrd.img.rkcrc" of="$LOOP_DEVICE" seek=$((0x14000)) conv=sync,fsync >/dev/null 2<&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install initd.img.rkcrc"
+	exit 22
+fi
+
+echo "Creating and installing u-boot.img for rockchip rk3288 platform"
+"$TOOLS_PATH/loaderimage" --pack --uboot "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img" $UBOOT_ADDR >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+        echo "Could not create uboot.img"
+        exit 18
+fi
+
+dd if="${DIST_PATH}/uboot.img" of="$LOOP_DEVICE" seek=$((0x6000)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+        echo "Could not install uboot.img"
+        exit 19
+fi
+

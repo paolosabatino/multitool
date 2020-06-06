@@ -29,6 +29,12 @@ The current driver is not able to write idbloader sectors to NAND device\n\
 It is ${RED}heavily suggested${NC} to skip the idbloader sectors writing on NAND\n\n\
 Do you want to skip idbloader sectors?"
 
+ERROR_ARCHIVE_WITHOUT_IMG_FILE="${RED}Error${NC}\n\nA compressed archive has been detected, but the archive\n\
+does not contain any .img file to be burned. Process cannot continue\n"
+
+ERROR_TAR_UNKNOWN_FORMAT="${RED}Error${NC}\n\nA compressed TAR archive has been detected, but the archive\n\
+is in an unknown format and cannot be decompressed.\n"
+
 CHOICE_FILE="/tmp/choice"
 
 FAT_PARTITION="/dev/mmcblk0p1"
@@ -403,7 +409,7 @@ function do_restore() {
 
 }
 
-# Given a file as first argument, returns its compressed format
+# Test the compression format for an archive
 function get_compression_format() {
 
 	TARGET=$1
@@ -422,13 +428,6 @@ function get_compression_format() {
 		return 0
 	fi
 
-	7zr l "$TARGET" >/dev/null 2>&1
-
-	if [ $? -eq 0 ]; then
-		echo "7zip"
-		return 0
-	fi
-
 	bzip2 -t "$TARGET" >/dev/null 2>&1
 
 	if [ $? -eq 0 ]; then
@@ -436,10 +435,10 @@ function get_compression_format() {
 		return 0
 	fi
 
-	zip -l "$TARGET" >/dev/null 2>&1
+	lzma -t "$TARGET" >/dev/null 2>&1
 
 	if [ $? -eq 0 ]; then
-		echo "zip"
+		echo "lzma"
 		return 0
 	fi
 
@@ -447,34 +446,142 @@ function get_compression_format() {
 
 }
 
-# Outputs the decompression command line suitable for the given input file
-# and format
+# Given a file as first argument, returns the decompressor command line
+# also exit code is 0 if the decompressor supports input file from stdin
+# otherwise returns 1
 function get_decompression_cli() {
 
-	TARGET=$1
-	FORMAT=$2
+	local TARGET=$1
+	local FILES_LIST
+	local CANDIDATE_STR
+	local CANDIDATE_UNCOMPRESSED_SIZE
+	local CANDIDATE_IMAGE
+	local FORMAT
+	local TAR_FORMAT_SWITCH
 
-	if [ "$FORMAT" = "gzip" ]; then
-		echo "pigz -d"
+
+	# 7z archive
+
+	FILES_LIST=$(7zr l -t7z "$TARGET" 2>/dev/null)
+
+	if [[ $? -eq 0 ]]; then
+
+		CANDIDATE_STR=$(grep -m 1 -i -e ".img$" <<< $FILES_LIST)
+
+		if [[ "$CANDIDATE_STR" = "" ]]; then
+			ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
+			return 1
+		fi
+
+		CANDIDATE_UNCOMPRESSED_SIZE=$(echo $CANDIDATE_STR | cut -d " " -f 4)
+		CANDIDATE_IMAGE=$(echo $CANDIDATE_STR | cut -d " " -f 6)
+
+		echo "7zr e -bb0 -bd -so -mmt4 '$TARGET' '$CANDIDATE_IMAGE' | pv -n -s $CANDIDATE_UNCOMPRESSED_SIZE"
+
+		D_FORMAT="7z archive"
+		D_REAL_FILE="$CANDIDATE_IMAGE"
+
 		return 0
-	elif [ "$FORMAT" = "xz" ]; then
-		echo "xz -d -T4"
-		return 0
-	elif [ "$FORMAT" = "bzip2" ]; then
-		echo "bzip2 -d -c"
-		return 0
-	elif [ "$FORMAT" = "raw" ]; then
-		echo "tee /dev/null"
-		return 0
-	elif [ "$FORMAT" = "7zip" ]; then
-		echo "7zr e -si -so -mmt 4"
-		return 0
-	elif [ "$FORMAT" = "zip" ]; then
-		echo "funzip"
-		return 0
+
 	fi
 
-	return 1
+	# Zip archive
+
+	FILES_LIST=$(unzip -l "$TARGET" 2>/dev/null)
+
+	if [[ $? -eq 0 ]]; then
+
+		CANDIDATE_STR=$(grep -m 1 -i -e ".img$" <<< $FILES_LIST)
+
+		if [[ "$CANDIDATE_STR" = "" ]]; then
+			ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
+			return 1
+		fi
+
+		CANDIDATE_UNCOMPRESSED_SIZE=$(echo $CANDIDATE_STR | cut -d " " -f 1)
+		CANDIDATE_IMAGE=$(echo $CANDIDATE_STR | cut -d " " -f 4)
+
+		echo "unzip -e -p '$TARGET' '$CANDIDATE_IMAGE' | pv -n -s $CANDIDATE_UNCOMPRESSED_SIZE"
+
+		D_FORMAT="zip archive"
+		D_REAL_FILE="$CANDIDATE_IMAGE"
+
+		return 0
+
+	fi
+
+	# Try to understand if it is a common unix file format.
+	# The function returns 0 if a known format has been found, 1 if not
+	FORMAT=$(get_decompression_format $TARGET)
+
+	if [[ $? -eq 0 ]]; then
+
+		# If we're here, first check if tar is able to give us a list of files.
+		# If so, this is a tar archive in the detected format, thus we find an .img
+		# file and select it as the target image
+
+		FILES_LIST=$(tar taf "$TARGET" 2>dev/null)
+
+		if [[ $? -eq 0 ]]; then
+
+			CANDIDATE_IMAGE=$(grep -m 1 -i -e ".img$" <<< $FILES_LIST)
+
+			if [[ "$CANDIDATE_IMAGE" = "" ]]; then
+				D_ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
+				return 1
+			fi
+
+			TAR_FMT_SWITCH=""
+
+			[[ "$FORMAT" = "gzip" ]] && TAR_FMT_SWITCH="-z"
+			[[ "$FORMAT" = "xz" ]] && TAR_FMT_SWITCH="-J"
+			[[ "$FORMAT" = "bzip2" ]] && TAR_FMT_SWITCH="-j"
+			[[ "$FORMAT" = "lzma" ]] && TAR_FMT_SWITCH="--lzma"
+
+			if [[ -z "$TAR_FMT_SWITCH" ]]; then
+				D_ERROR_TEXT="$ERROR_TAR_UNKNOWN_FORMAT"
+				return 1
+			fi
+
+			echo "pv -n '$TARGET' | tar -O -x ${TAR_FMT_SWITCH} -f - '$CANDIDATE_IMAGE'"
+
+			D_FORMAT="tar archive"
+			D_REAL_FILE="$CANDIDATE_IMAGE"
+
+			return 0
+
+		fi
+
+		if [[ "$FORMAT" = "gzip" ]]; then
+			echo "pv -n '$TARGET' | pigz -d"
+			D_FORMAT="gzip compressed image"
+			return 0
+		fi
+
+		if [[ "$FORMAT" = "xz" ]]; then
+			echo "pv -n '$TARGET' | xz -d -T4"
+			D_FORMAT="xz compressed image"
+			return 0
+		fi
+
+		if [[ "$FORMAT" = "bzip2" ]]; then
+			echo "pv -n '$TARGET' | bzip2 -d -c"
+			D_FORMAT="bzip2 compressed image"
+			return 0
+		fi
+
+		if [[ "$FORMAT" = "lzma" ]]; then
+			echo "pv -n '$TARGET' | lzma -d -c"
+			D_FORMAT="lzma compressed image"
+			return 0
+		fi
+
+	fi
+
+	echo "pv -n '$TARGET'"
+	D_FORMAT="raw image"
+
+	return 0
 
 }
 
@@ -534,30 +641,11 @@ function do_burn() {
 
 	BASENAME=$(basename $IMAGE_SOURCE)
 
-	COMPRESSION_FORMAT=$(get_compression_format $IMAGE_SOURCE)
+	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE)
 
-	if [ $? -ne 0 ]; then
-
-		dialog --backtitle "$BACKTITLE" \
-			--yesno "Do you want to proceed to burn a RAW image?" 10 60
-
-		if [ $? -ne 0 ]; then
-			unmount_fat_partition
-			return 2
-		fi
-
-		COMPRESSION_FORMAT="raw"
-
-	fi
-
-	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE $COMPRESSION_FORMAT)
-
-	if [ $? -ne 0 ]; then
-
-		inform_wait "Unknown file format, cannot proceed"
-		unmount_fat_partition
+	if [[ $? -ne 0 ]]; then
+		inform_wait "$D_ERROR_TEXT"
 		return 1
-
 	fi
 
 	SKIP_BLOCKS=0
@@ -569,7 +657,8 @@ function do_burn() {
 	# sectors
 	if [[ "$BLK_DEVICE" =~ "rknand" ]]; then
 
-		SIGNATURE=$(cat "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | od -A none -j $((0x40 * 0x200)) -N 16 -tx1)
+		SIGNATURE_CLI="$DECOMPRESSION_CLI | od -A none -j $((0x40 * 0x200)) -N 16 -tx1"
+		SIGNATURE=$(eval "$SIGNATURE_CLI" 2>/dev/null)
 	
 		if [ "$SIGNATURE" = "$IDBLOADER_SIGNATURE" ]; then
 
@@ -589,9 +678,18 @@ function do_burn() {
 
 	set_led_state "$DEVICE_NAME"
 
-	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" skip=$SKIP_BLOCKS seek=$SEEK_BLOCKS bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+	OPERATION_CLI="$DECOMPRESSION_CLI | dd of='/dev/$BLK_DEVICE' skip=$SKIP_BLOCKS seek=$SEEK_BLOCKS bs=512K iflag=fullblock oflag=direct 2>/dev/null"
+
+	if [[ "$D_REAL_FILE" = "" ]]; then
+		OPERATION_TEXT="Source archive: $BASENAME\nSource format: $D_FORMAT\nImage file: $D_REAL_FILE\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+	else
+		OPERATION_TEXT="Image file $BASENAME\nSource format: $D_FORMAT\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+	fi
+
+
+	(eval "$OPERATION_CLI") 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
-		--gauge "Burning image $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
+		--gauge "$OPERATION_TEXT" 10 70 0
 
 	ERR=$?
 
@@ -606,8 +704,10 @@ function do_burn() {
 	if [ $IDBLOADER_SKIP -eq 1 ]; then
 
 		inform "Restoring partition table and installing custom u-boot loader. This will take a moment..."
+		
+		OPERATION_CLI="$DECOMPRESSION_CLI 2>/dev/null | dd of='/dev/$BLK_DEVICE' bs=32k count=1 iflag=fullblock oflag=direct 2>/dev/null"
+		(eval "$OPERATION_CLI")
 
-		(cat "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" bs=32k count=1 iflag=fullblock oflag=direct 2>/dev/null)
 		ERR=$?
 
 		if [ $ERR -ne 0 ]; then
@@ -687,30 +787,11 @@ function do_install_stepnand() {
 
 	BASENAME=$(basename $IMAGE_SOURCE)
 
-	COMPRESSION_FORMAT=$(get_compression_format $IMAGE_SOURCE)
+	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE)
 
-	if [ $? -ne 0 ]; then
-
-		dialog --backtitle "$BACKTITLE" \
-			--yesno "Do you want to proceed to burn a RAW image?" 10 60
-
-		if [ $? -ne 0 ]; then
-			unmount_fat_partition
-			return 2
-		fi
-
-		COMPRESSION_FORMAT="raw"
-
-	fi
-
-	DECOMPRESSION_CLI=$(get_decompression_cli $IMAGE_SOURCE $COMPRESSION_FORMAT)
-
-	if [ $? -ne 0 ]; then
-
-		inform_wait "Unknown file format, cannot proceed"
-		unmount_fat_partition
+	if [[ $? -ne 0 ]]; then
+		inform_wait "$D_ERROR_TEXT"
 		return 1
-
 	fi
 
 	set_led_state "$DEVICE_NAME"
@@ -718,9 +799,17 @@ function do_install_stepnand() {
 	# Armbian rootfs must be copied from sector 0x2000, which is naturally allocated,
 	# to sector 0x8000 on NAND. That is so because the first 0x8000 sectors are used
 	# for legacy u-boot and trustos.
-	(pv -n "$IMAGE_SOURCE" | $DECOMPRESSION_CLI | dd of="/dev/$BLK_DEVICE" skip=8 seek=32 bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+	OPERATION_CLI="$DECOMPRESSION_CLI | dd of='/dev/$BLK_DEVICE' skip=8 seek=32 bs=512K iflag=fullblock oflag=direct 2>/dev/null"
+
+	if [[ "$D_REAL_FILE" = "" ]]; then
+		OPERATION_TEXT="Source archive: $BASENAME\nSource format: $D_FORMAT\nImage file: $D_REAL_FILE\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+	else
+		OPERATION_TEXT="Image file $BASENAME\nSource format: $D_FORMAT\nDestination: $BLK_DEVICE\n\nOperation in progress, please wait..."
+	fi
+
+	(eval "$OPERATION_CLI") 2>&1 | dialog \
 		--backtitle "$BACKTITLE" \
-		--gauge "Burning image $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
+		--gauge "$OPERATION_TEXT" 10 70 0
 
 	ERR=$?
 
@@ -758,7 +847,7 @@ function do_install_stepnand() {
 	# an existing partition table, even with --zap-all argument
 	# TODO: fix the 3G size with the real origin partition size
 	dd if=/dev/zero of="/dev/$BLK_DEVICE" bs=32k count=1 conv=sync,fsync >/dev/null 2>&1
-	sgdisk -o "/dev/$BLK_DEVICE"
+	sgdisk -o "/dev/$BLK_DEVICE" >/dev/null 2>&1
 	sgdisk --zap-all -n 0:32768:+3G "/dev/$BLK_DEVICE" >/dev/null 2>&1
 	ERR=$?
 
