@@ -170,7 +170,7 @@ fi
 source "${TS_SOURCES_PATH}/boot_install"
 
 echo "Formatting FAT32 partition"
-mkfs.vfat "$FAT_PARTITION" >/dev/null 2>&1
+mkfs.vfat "$FAT_PARTITION" -s 32 -n "MULTITOOL" >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Could not format partition"
