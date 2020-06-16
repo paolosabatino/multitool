@@ -47,6 +47,11 @@ cp init "$ROOTFS_DIR/sbin/init"
 mkdir -p "$ROOTFS_DIR/usr/local/bin"
 cp multitool.sh "$ROOTFS_DIR/usr/local/bin"
 
+chmod +x "$ROOTFS_DIR/sbin/init"
+chmod +x "$ROOTFS_DIR/usr/local/bin/multitool.sh"
+
+mkdir -p "$ROOTFS_DIR/mnt"
+
 # Once we're in chroot, root / directory is rootfs
 chroot rootfs /bin/qemu-arm-static /bin/bash /tmp/configure.sh
 
