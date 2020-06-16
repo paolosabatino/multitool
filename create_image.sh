@@ -84,7 +84,7 @@ echo "-> rootfs size: ${ROOTFS_SIZE}kb"
 
 echo "Creating empty image in $DEST_IMAGE"
 #dd if=/dev/zero of="$DEST_IMAGE" bs=1M count=1024 conv=sync,fsync >/dev/null 2>&1
-fallocate -l 1G "$DEST_IMAGE" >/dev/null 2>&1
+fallocate -l 2G "$DEST_IMAGE" >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Error while creating $DEST_IMAGE empty file"
@@ -170,7 +170,7 @@ fi
 source "${TS_SOURCES_PATH}/boot_install"
 
 echo "Formatting FAT32 partition"
-mkfs.vfat "$FAT_PARTITION" -s 32 -n "MULTITOOL" >/dev/null 2>&1
+mkfs.vfat -s 32 -n "MULTITOOL" "$FAT_PARTITION" >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Could not format partition"
