@@ -512,65 +512,60 @@ function get_decompression_cli() {
 	fi
 
 	# Try to understand if it is a common unix file format.
-	# The function returns 0 if a known format has been found, 1 if not
 	FORMAT=$(get_compression_format $TARGET)
+
+	# Now check if tar is able to give us a list of files.
+	# If so, this is a tar archive and, maybe it is also compressed with some
+	# standard unix pipe compressors. We look into for an .img file and select 
+	# it as the target image
+	FILES_LIST=$(tar taf "$TARGET" 2>/dev/null)
 
 	if [[ $? -eq 0 ]]; then
 
-		# If we're here, first check if tar is able to give us a list of files.
-		# If so, this is a tar archive in the detected format, thus we find an .img
-		# file and select it as the target image
+		CANDIDATE_IMAGE=$(grep -m 1 -i -e ".img$" <<< $FILES_LIST)
 
-		FILES_LIST=$(tar taf "$TARGET" 2>/dev/null)
-
-		if [[ $? -eq 0 ]]; then
-
-			CANDIDATE_IMAGE=$(grep -m 1 -i -e ".img$" <<< $FILES_LIST)
-
-			if [[ "$CANDIDATE_IMAGE" = "" ]]; then
-				D_ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
-				return 1
-			fi
-
-			TAR_FMT_SWITCH=""
-
-			[[ "$FORMAT" = "gzip" ]] && TAR_FMT_SWITCH="-z"
-			[[ "$FORMAT" = "xz" ]] && TAR_FMT_SWITCH="-J"
-			[[ "$FORMAT" = "bzip2" ]] && TAR_FMT_SWITCH="-j"
-			[[ "$FORMAT" = "lzma" ]] && TAR_FMT_SWITCH="--lzma"
-
-			D_COMMAND_LINE="pv -n '$TARGET' | tar -O -x ${TAR_FMT_SWITCH} -f - '$CANDIDATE_IMAGE'"
-			D_FORMAT="tar archive"
-			D_REAL_FILE="$CANDIDATE_IMAGE"
-
-			return 0
-
+		if [[ "$CANDIDATE_IMAGE" = "" ]]; then
+			D_ERROR_TEXT="$ERROR_ARCHIVE_WITHOUT_IMG_FILE"
+			return 1
 		fi
 
-		if [[ "$FORMAT" = "gzip" ]]; then
-			D_COMMAND_LINE="pv -n '$TARGET' | pigz -d"
-			D_FORMAT="gzip compressed image"
-			return 0
-		fi
+		TAR_FMT_SWITCH=""
 
-		if [[ "$FORMAT" = "xz" ]]; then
-			D_COMMAND_LINE="pv -n '$TARGET' | xz -d -T4"
-			D_FORMAT="xz compressed image"
-			return 0
-		fi
+		[[ "$FORMAT" = "gzip" ]] && TAR_FMT_SWITCH="-z"
+		[[ "$FORMAT" = "xz" ]] && TAR_FMT_SWITCH="-J"
+		[[ "$FORMAT" = "bzip2" ]] && TAR_FMT_SWITCH="-j"
+		[[ "$FORMAT" = "lzma" ]] && TAR_FMT_SWITCH="--lzma"
 
-		if [[ "$FORMAT" = "bzip2" ]]; then
-			D_COMMAND_LINE="pv -n '$TARGET' | bzip2 -d -c"
-			D_FORMAT="bzip2 compressed image"
-			return 0
-		fi
+		D_COMMAND_LINE="pv -n '$TARGET' | tar -O -x ${TAR_FMT_SWITCH} -f - '$CANDIDATE_IMAGE'"
+		D_FORMAT="tar archive"
+		D_REAL_FILE="$CANDIDATE_IMAGE"
 
-		if [[ "$FORMAT" = "lzma" ]]; then
-			D_COMMAND_LINE="pv -n '$TARGET' | lzma -d -c"
-			D_FORMAT="lzma compressed image"
-			return 0
-		fi
+		return 0
 
+	fi
+
+	if [[ "$FORMAT" = "gzip" ]]; then
+		D_COMMAND_LINE="pv -n '$TARGET' | pigz -d"
+		D_FORMAT="gzip compressed image"
+		return 0
+	fi
+
+	if [[ "$FORMAT" = "xz" ]]; then
+		D_COMMAND_LINE="pv -n '$TARGET' | xz -d -T4"
+		D_FORMAT="xz compressed image"
+		return 0
+	fi
+
+	if [[ "$FORMAT" = "bzip2" ]]; then
+		D_COMMAND_LINE="pv -n '$TARGET' | bzip2 -d -c"
+		D_FORMAT="bzip2 compressed image"
+		return 0
+	fi
+
+	if [[ "$FORMAT" = "lzma" ]]; then
+		D_COMMAND_LINE="pv -n '$TARGET' | lzma -d -c"
+		D_FORMAT="lzma compressed image"
+		return 0
 	fi
 
 	D_COMMAND_LINE="pv -n '$TARGET'"
