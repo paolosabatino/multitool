@@ -1,13 +1,13 @@
 #!/bin/bash
 
 echo "Creating and installing u-boot.img for rockchip rk3318 platform"
-cp "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img"
-#"$TOOLS_PATH/loaderimage" --pack --uboot "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img" $UBOOT_ADDR >/dev/null 2>&1
-#
-#if [ $? -ne 0 ]; then
-#	echo "Could not create uboot.img"
-#	exit 18
-#fi
+#cp "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img"
+"$TOOLS_PATH/loaderimage" --pack --uboot "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img" $UBOOT_ADDR >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not create uboot.img"
+	exit 18
+fi
 
 dd if="${DIST_PATH}/uboot.img" of="$LOOP_DEVICE" seek=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
 

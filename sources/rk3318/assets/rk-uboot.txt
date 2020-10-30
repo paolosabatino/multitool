@@ -1,0 +1,3 @@
+Repository: https://github.com/rockchip-linux/u-boot.git
+HEAD commit: 46e7ba36f642cf0ca1abb46bd6a060139c63574f
+TAG: v2018.01
