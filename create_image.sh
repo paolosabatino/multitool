@@ -241,15 +241,27 @@ cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"
 [[ -f "${DIST_PATH}/trustos.img" ]] && cp "${DIST_PATH}/trustos.img" "${TEMP_DIR}/bsp/trustos.img"
 [[ -f "${DIST_PATH}/legacy-uboot.img" ]] && cp "${DIST_PATH}/legacy-uboot.img" "${TEMP_DIR}/bsp/legacy-uboot.img"
 
-PARTITION_UUID=$(lsblk -n -o UUID $FAT_PARTITION)
+SQUASHFS_PARTITION_UUID=$(lsblk -n -o PARTUUID $SQUASHFS_PARTITION)
 if [ $? -ne 0 ]; then
-	echo "Could not get partition UUID"
+	echo "Could not get SQUASHFS PARTUUID"
 	exit 15
 fi
 
-sed -i "s/#PARTUUID#/$PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
+FAT_PARTITION_UUID=$(lsblk -n -o PARTUUID $FAT_PARTITION)
 if [ $? -ne 0 ]; then
-	echo "Could not substitute partition UUID in extlinux.conf"
+	echo "Could not get FAT PARTUUID"
+	exit 15
+fi
+
+sed -i "s/#SQUASHFS_PARTUUID#/$SQUASHFS_PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
+if [ $? -ne 0 ]; then
+	echo "Could not substitute SQUASHFS PARTUUID in extlinux.conf"
+	exit 16
+fi
+
+sed -i "s/#FAT_PARTUUID#/$FAT_PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
+if [ $? -ne 0 ]; then
+	echo "Could not substitute FAT PARTUUID in extlinux.conf"
 	exit 16
 fi
 

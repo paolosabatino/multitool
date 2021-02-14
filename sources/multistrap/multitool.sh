@@ -39,7 +39,9 @@ is in an unknown format and cannot be decompressed.\n"
 
 CHOICE_FILE="/tmp/choice"
 
-FAT_PARTITION="/dev/mmcblk0p1"
+# The FAT partition must have MULTITOOL label name. blkid is handy in this case because it will detect
+# the FAT partition on any device (mmc/usb) it is
+FAT_PARTITION=$(blkid -l --label "MULTITOOL")
 
 MOUNT_POINT="/mnt"
 WORK_LED="/sys/class/leds/led:state1"
