@@ -10,20 +10,21 @@ mount -t proc /proc /proc
 getty --autologin root ttyS2 &
 
 # Check if the fat partition requires a resize
-BOOT_DEVICE="mmcblk0"
-FAT_PARTITION="p1"
+DEVICE_FAT_PARTITION=$(blkid --label "MULTITOOL" -l)
+MAJMIN_FAT_PARTITION=$(echo "$(lsblk -n -o MAJ:MIN $DEVICE_FAT_PARTITION)" | tr -d " ")
+MAJMIN_BOOT_DEVICE="$(echo $MAJMIN_FAT_PARTITION | cut -d ":" -f 1):0"
 
-if [ -b "/dev/${BOOT_DEVICE}${FAT_PARTITION}" ]; then
+if [ -b "${DEVICE_FAT_PARTITION}" ]; then
 
 	MAX_DIFF_SPACE=$((1024 * 1024)) # a difference in spare space greater than this amount
 					# triggers a resize (1 GB)
 
 	THRES_DIFF_SPACE=$((128 * 1024)) # fill the FAT partition up to this space (max - 128 MB)
 	
-	FAT_PARTITION_START=$(cat "/sys/block/${BOOT_DEVICE}/${BOOT_DEVICE}${FAT_PARTITION}/start") # sectors
-	FAT_PARTITION_SIZE=$(cat "/sys/block/${BOOT_DEVICE}/${BOOT_DEVICE}${FAT_PARTITION}/size") # sectors
+	FAT_PARTITION_START=$(cat "/sys/dev/block/${MAJMIN_FAT_PARTITION}/start") # sectors
+	FAT_PARTITION_SIZE=$(cat "/sys/dev/block/${MAJMIN_FAT_PARTITION}/size") # sectors
 
-	DEVICE_SIZE=$(cat "/sys/block/${BOOT_DEVICE}/size")
+	DEVICE_SIZE=$(cat "/sys/dev/block/${MAJMIN_BOOT_DEVICE}/size")
 	SPARE_SPACE=$(($DEVICE_SIZE - $FAT_PARTITION_START))
 
 	SPARE_SPACE=$(($DEVICE_SIZE / 2)) # sectors / 2 = kbytes
@@ -35,7 +36,7 @@ if [ -b "/dev/${BOOT_DEVICE}${FAT_PARTITION}" ]; then
 
 		dialog --infobox "Please wait some seconds, resizing FAT partition..." 5 60 <> /dev/tty1 >&0 2>&1
 
-		fatresize -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))ki "/dev/${BOOT_DEVICE}${FAT_PARTITION}"
+		fatresize -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))ki "${DEVICE_FAT_PARTITION}"
 
 		ERR=$?
 
