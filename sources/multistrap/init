@@ -10,9 +10,10 @@ mount -t proc /proc /proc
 getty --autologin root ttyS2 &
 
 # Check if the fat partition requires a resize
-DEVICE_FAT_PARTITION=$(blkid --label "MULTITOOL" -l)
-MAJMIN_FAT_PARTITION=$(echo "$(lsblk -n -o MAJ:MIN $DEVICE_FAT_PARTITION)" | tr -d " ")
-MAJMIN_BOOT_DEVICE="$(echo $MAJMIN_FAT_PARTITION | cut -d ":" -f 1):0"
+DEVICE_FAT_PARTITION=$(blkid --label "MULTITOOL" -l) # eg: /dev/mmcblk0p2
+
+CLASS_FAT_PARTITION="/sys/class/block/$(lsblk -n -o KNAME $DEVICE_FAT_PARTITION)" # eg: /sys/class/block/mmcblk0p2
+CLASS_BOOT_DEVICE="/sys/class/block/$(lsblk -n -o PKNAME $DEVICE_FAT_PARTITION)" # eg: /sys/class/block/mmcblk0
 
 if [ -b "${DEVICE_FAT_PARTITION}" ]; then
 
@@ -21,10 +22,10 @@ if [ -b "${DEVICE_FAT_PARTITION}" ]; then
 
 	THRES_DIFF_SPACE=$((128 * 1024)) # fill the FAT partition up to this space (max - 128 MB)
 	
-	FAT_PARTITION_START=$(cat "/sys/dev/block/${MAJMIN_FAT_PARTITION}/start") # sectors
-	FAT_PARTITION_SIZE=$(cat "/sys/dev/block/${MAJMIN_FAT_PARTITION}/size") # sectors
+	FAT_PARTITION_START=$(cat "$CLASS_FAT_PARTITION/start") # sectors
+	FAT_PARTITION_SIZE=$(cat "$CLASS_FAT_PARTITION/size") # sectors
 
-	DEVICE_SIZE=$(cat "/sys/dev/block/${MAJMIN_BOOT_DEVICE}/size")
+	DEVICE_SIZE=$(cat "$CLASS_BOOT_DEVICE/size")
 	SPARE_SPACE=$(($DEVICE_SIZE - $FAT_PARTITION_START))
 
 	SPARE_SPACE=$(($DEVICE_SIZE / 2)) # sectors / 2 = kbytes

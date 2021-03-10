@@ -2,11 +2,11 @@
 
 TTY_CONSOLE="/dev/tty$(fgconsole)"
 
-# Taken from https://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
 
 BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
 
+# Taken from https://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
 BOLD="\Zb"
 RED="\Z1"
 NC="\Z0"
@@ -42,6 +42,7 @@ CHOICE_FILE="/tmp/choice"
 # The FAT partition must have MULTITOOL label name. blkid is handy in this case because it will detect
 # the FAT partition on any device (mmc/usb) it is
 FAT_PARTITION=$(blkid -l --label "MULTITOOL")
+BOOT_DEVICE="/dev/$(lsblk -n -o PKNAME $FAT_PARTITION)"
 
 MOUNT_POINT="/mnt"
 WORK_LED="/sys/class/leds/led:state1"
@@ -927,13 +928,13 @@ function do_install_jump_start() {
 
 	inform "Transferring boot loader, please wait..."
 
-	dd if=/dev/mmcblk0 of=/dev/rknand0 skip=$((0x4000)) seek=$((0x2000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+	dd if="$BOOT_DEVICE" of=/dev/rknand0 skip=$((0x4000)) seek=$((0x2000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
 	if [ $? -ne 0 ]; then
 		inform_wait "Could not transfer U-boot on NAND device"
 		return 1
 	fi
 
-	dd if=/dev/mmcblk0 of=/dev/rknand0 skip=$((0x8000)) seek=$((0x6000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+	dd if="$BOOT_DEVICE" of=/dev/rknand0 skip=$((0x8000)) seek=$((0x6000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
 	if [ $? -ne 0 ]; then
 		inform_wait "Could not transfer TEE on NAND device"
 		return 1
