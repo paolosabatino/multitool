@@ -271,6 +271,16 @@ if [ $? -ne 0 ]; then
 	exit 28
 fi
 
+git log --no-merges --pretty="%as: %s" > "${TEMP_DIR}/CHANGELOG"
+if [ $? -ne 0 ]; then
+	echo "Could not store CHANGELOG to partition"
+fi
+
+echo "${TARGET_CONF}" > "${TEMP_DIR}/TARGET"
+if [ $? -ne 0 ]; then
+	echo "Could not store TARGET to partition"
+fi
+
 echo "Unmount FAT32 partition"
 umount "$FAT_PARTITION" >/dev/null 2>&1
 
