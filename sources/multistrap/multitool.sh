@@ -2,9 +2,11 @@
 
 TTY_CONSOLE="/dev/tty$(fgconsole)"
 
-
 BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
+
+ISSUE="unknown" # Will be read later from /mnt/ISSUE
+TARGET_CONF="unknown" # Will be read later from /mnt/TARGET
 
 # Taken from https://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
 BOLD="\Zb"
@@ -982,6 +984,11 @@ function do_shutdown() {
 # ----- Entry point -----
 
 mount_fat_partition
+
+ISSUE=$(</mnt/ISSUE)
+TARGET_CONF=$(</mnt/TARGET)
+
+BACKTITLE="$BACKTITLE - Platform: $TARGET_CONF - Build: $ISSUE"
 
 dialog --backtitle "$BACKTITLE" \
 	--textbox "/mnt/LICENSE" 0 0

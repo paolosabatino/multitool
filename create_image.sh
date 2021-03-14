@@ -276,6 +276,11 @@ if [ $? -ne 0 ]; then
 	echo "Could not store CHANGELOG to partition"
 fi
 
+git log -1 --pretty="%h - %aD" > "${TEMP_DIR}/ISSUE"
+if [ $? -ne 0 ]; then
+	echo "Could not store ISSUE to paritition"
+fi
+
 echo "${TARGET_CONF}" > "${TEMP_DIR}/TARGET"
 if [ $? -ne 0 ]; then
 	echo "Could not store TARGET to partition"
