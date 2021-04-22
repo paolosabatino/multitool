@@ -47,6 +47,13 @@
 	model = "Rockchip RK3318 BOX";
 	compatible = "rockchip,rk3318-box", "rockchip,rk3328-box", "rockchip,rk3328";
 
+	aliases {
+		mmc0 = <&sdmmc>;
+		mmc1 = <&sdio>;
+		mmc2 = <&emmc>;
+		mmc3 = <&sdmmc_ext>;
+	};
+
 	chosen {
 		bootargs = "console=ttyS2,115200";
 	};
@@ -304,7 +311,7 @@
 };
 
 &gpu {
-	status = "okay";
+	status = "disabled";
 	mali-supply = <&vdd_logic>;
 };
 
