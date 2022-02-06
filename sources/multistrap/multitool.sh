@@ -121,13 +121,16 @@ function get_block_device() {
 # Mounts FAT partition on /mnt to allow operations on it
 function mount_fat_partition() {
 
+    # Try to do a remount: if partition is already mounted
+    # it will succeed, otherwise we will try to mount again
+    # but regularly this time.
+    mount "$FAT_PARTITION" "$MOUNT_POINT" -o remount > /dev/null 2>/dev/null
+    [[ $? -eq 0 ]] && return 0
+
     mount "$FAT_PARTITION" "$MOUNT_POINT" > /dev/null 2>/dev/null
+    [[ $? -eq 0 ]] && return 0
 
-    if [ $? -ne 0 ]; then
-        return 1
-    fi
-
-    return 0
+    return 1
 
 }
 
@@ -1221,3 +1224,6 @@ while true; do
     fi
 
 done
+
+clear
+
