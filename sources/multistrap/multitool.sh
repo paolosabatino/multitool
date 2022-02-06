@@ -1,6 +1,12 @@
 #!/bin/bash
 
-TTY_CONSOLE="/dev/tty$(fgconsole)"
+# In case of SSH session, TTY console is the SSH allocated PTY, otherwise
+# use the regular TTY foreground terminal
+if [[ -n "$SSH_TTY" ]]; then
+	TTY_CONSOLE="$SSH_TTY"
+else
+	TTY_CONSOLE="/dev/tty$(fgconsole)"
+fi
 
 BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
@@ -1190,7 +1196,9 @@ while true; do
 
     CHOICE=${CHOICE:-0}
 
-    if [[ $CHOICE = "1" ]]; then
+    if [[ $CHOICE = "0" ]]; then
+	break
+    elif [[ $CHOICE = "1" ]]; then
         do_backup
     elif [[ $CHOICE = "2" ]]; then
         do_restore
