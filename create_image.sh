@@ -309,7 +309,7 @@ if [ $? -ne 0 ]; then
 	exit 23
 fi
 
-truncate -s 128M "$DEST_IMAGE"
+truncate -s 140M "$DEST_IMAGE"
 
 sync
 
