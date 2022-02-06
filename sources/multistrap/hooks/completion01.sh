@@ -39,9 +39,21 @@ chmod +x /sbin/init
 # Give execution permissions to /usr/local/bin/multitoolsh
 chmod +x /usr/local/bin/multitool.sh
 
+# Patch /etc/shadow to remove root password
+sed -i 's/root:\*:/root::/' /etc/shadow
+
 EOF
 
 chmod +x $ROOTFS_DIR/tmp/configure.sh
+
+cp -raT overlays "$ROOTFS_DIR"
+
+chmod 600 "$ROOTFS_DIR/etc/dropbear/dropbear_rsa_host_key"
+chmod 600 "$ROOTFS_DIR/etc/dropbear/dropbear_dss_host_key"
+chmod 600 "$ROOTFS_DIR/etc/dropbear/dropbear_ecdsa_host_key"
+chmod 640 "$ROOTFS_DIR/etc/dropbear/dropbear_rsa_host_key.pub"
+chmod 640 "$ROOTFS_DIR/etc/dropbear/dropbear_dss_host_key.pub"
+chmod 640 "$ROOTFS_DIR/etc/dropbear/dropbear_ecdsa_host_key.pub"
 
 cp init "$ROOTFS_DIR/sbin/init"
 mkdir -p "$ROOTFS_DIR/usr/local/bin"

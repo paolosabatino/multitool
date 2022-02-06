@@ -4,6 +4,17 @@
 mount -t sysfs /sys /sys
 mount -t tmpfs /tmp /tmp
 mount -t proc /proc /proc
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+
+# Force 169.254.255.120 address to eth0:1 virtual interface
+/sbin/ifconfig eth0:1 169.254.255.120/24
+
+# Run dhclient in daemon mode 
+/sbin/dhclient -nw
+
+# Launch dropbear in daemon mode
+/usr/sbin/dropbear -B
 
 # Spawn a shell on ttyS2 serial port, always available
 #setsid getty --autologin root ttyS2 &
