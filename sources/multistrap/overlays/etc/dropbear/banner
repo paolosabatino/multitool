@@ -1,0 +1,10 @@
+
+Welcome to Multitool SSH session!
+
+To run the interactive menu-system run:
+
+	multitool.sh
+
+BEWARE: do not operate the multitool from both SSH and real terminal
+	session at the same time!
+

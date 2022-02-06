@@ -42,6 +42,10 @@ chmod +x /usr/local/bin/multitool.sh
 # Patch /etc/shadow to remove root password
 sed -i 's/root:\*:/root::/' /etc/shadow
 
+# Create a symlink for /etc/resolv.conf to /tmp because
+# dhclient script wants a writable resolve.conf
+ln -sf /tmp/resolv.conf /etc/resolv.conf
+
 EOF
 
 chmod +x $ROOTFS_DIR/tmp/configure.sh

@@ -7,14 +7,26 @@ mount -t proc /proc /proc
 mkdir -p /dev/pts
 mount -t devpts devpts /dev/pts
 
-# Force 169.254.255.120 address to eth0:1 virtual interface
-/sbin/ifconfig eth0:1 169.254.255.120/24
+# Touch /tmp/resolv.conf, to let dhclient-script work correctly
+touch /tmp/resolv.conf
 
-# Run dhclient in daemon mode 
-/sbin/dhclient -nw
+# Set the hostname
+/bin/hostname -F /etc/hostname
+
+# Raise network interface
+/sbin/ifconfig eth0 up
+
+# Provide a fixed link-local address to eth0:1 virtual interface (give 5 seconds timeout
+/sbin/ifconfig eth0:1 169.254.120.120/16 
+
+# Run dhclient in daemon mode
+/sbin/dhclient -lf /tmp/dhclient.leases -pf /tmp/dhclient.pid -nw eth0
+
+# Start ntp client daemon
+ntpd -g -G
 
 # Launch dropbear in daemon mode
-/usr/sbin/dropbear -B
+/usr/sbin/dropbear -B -b /etc/dropbear/banner
 
 # Spawn a shell on ttyS2 serial port, always available
 #setsid getty --autologin root ttyS2 &
@@ -60,7 +72,15 @@ if [ -b "${DEVICE_FAT_PARTITION}" ]; then
 
 fi
 
-if [ -f /usr/local/bin/multitool.sh ]; then
+# Mount the FAT partition to write dmesg log on it,
+# then immediately unmounts it
+mount "$DEVICE_FAT_PARTITION" "/mnt"
+if [[ $? -eq 0 ]]; then
+	dmesg > /mnt/dmesg.multitool.log
+	umount "/mnt"
+fi
+
+if [[ -f /usr/local/bin/multitool.sh ]]; then
 	while true; do
 		setsid /bin/bash /usr/local/bin/multitool.sh <> /dev/tty1 >&0 2>&1	
 	done
