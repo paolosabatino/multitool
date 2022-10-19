@@ -143,6 +143,12 @@ LOOP_DEVICE=$(losetup -f --show -P "$DEST_IMAGE")
 SQUASHFS_PARTITION="${LOOP_DEVICE}p2"
 FAT_PARTITION="${LOOP_DEVICE}p1"
 
+sleep 1
+
+echo "squashfs partition: $SQUASHFS_PARTITION"
+echo "fat partition: $FAT_PARTITION"
+
+
 if [ $? -ne 0 ]; then
 	echo "Could not remount loop device $LOOP_DEVICE"
 	exit 5
@@ -241,17 +247,29 @@ cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"
 [[ -f "${DIST_PATH}/trustos.img" ]] && cp "${DIST_PATH}/trustos.img" "${TEMP_DIR}/bsp/trustos.img"
 [[ -f "${DIST_PATH}/legacy-uboot.img" ]] && cp "${DIST_PATH}/legacy-uboot.img" "${TEMP_DIR}/bsp/legacy-uboot.img"
 
-SQUASHFS_PARTITION_UUID=$(lsblk -n -o PARTUUID $SQUASHFS_PARTITION)
+# Gather the PARTUUID of the squashfs partition loop device
+# blkid is friendlier in case of containers, so we use it here in place of lsblk
+SQUASHFS_PARTITION_UUID=$(blkid -o value -s PARTUUID $SQUASHFS_PARTITION)
 if [ $? -ne 0 ]; then
 	echo "Could not get SQUASHFS PARTUUID"
 	exit 15
 fi
 
-FAT_PARTITION_UUID=$(lsblk -n -o PARTUUID $FAT_PARTITION)
+[[ -z $SQUASHFS_PARTITION_UUID ]] && echo "--- warning: empty squashfs partition UUID ---"
+
+echo "squashfs partition uuid: $SQUASHFS_PARTITION_UUID"
+
+# Gather the UUID of the FAT partition of the loop device
+# blkid is friendlier in case of containers, so we use it here in place of lsblk
+FAT_PARTITION_UUID=$(blkid -o value -s UUID $FAT_PARTITION)
 if [ $? -ne 0 ]; then
 	echo "Could not get FAT PARTUUID"
 	exit 15
 fi
+
+[[ -z $FAT_PARTITION_UUID ]] && echo "--- warning: empty FAT boot partition UUID ---"
+
+echo "fat partition uuid: $FAT_PARTITION_UUID"
 
 sed -i "s/#SQUASHFS_PARTUUID#/$SQUASHFS_PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
 if [ $? -ne 0 ]; then
