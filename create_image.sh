@@ -142,6 +142,7 @@ fi
 LOOP_DEVICE=$(losetup -f --show -P "$DEST_IMAGE")
 SQUASHFS_PARTITION="${LOOP_DEVICE}p2"
 FAT_PARTITION="${LOOP_DEVICE}p1"
+sleep 1
 
 sleep 1
 
