@@ -130,30 +130,38 @@ fi
 sync
 sleep 1
 
-echo "Remounting loop device with partitions"
-losetup -d "$LOOP_DEVICE" >/dev/null 2>&1
-sleep 1
-
-if [ $? -ne 0 ]; then
-	echo "Could not umount loop device $LOOP_DEVICE"
-	exit 4
-fi
-
-LOOP_DEVICE=$(losetup -f --show -P "$DEST_IMAGE")
+# First check: in containers, it may happen that loop device partitions
+# spawns as soon as they are created. We check their presence. If they already
+# are there, we don't remount the device
 SQUASHFS_PARTITION="${LOOP_DEVICE}p2"
 FAT_PARTITION="${LOOP_DEVICE}p1"
-sleep 1
-
-sleep 1
-
 echo "squashfs partition: $SQUASHFS_PARTITION"
 echo "fat partition: $FAT_PARTITION"
 
+if [ ! -b "$SQUASHFS_PARTITION" -o ! -b "$FAT_PARTITION" ]; then
+	echo "Remounting loop device with partitions"
+	losetup -d "$LOOP_DEVICE" >/dev/null 2>&1
+	sleep 1
 
-if [ $? -ne 0 ]; then
-	echo "Could not remount loop device $LOOP_DEVICE"
-	exit 5
+	if [ $? -ne 0 ]; then
+		echo "Could not umount loop device $LOOP_DEVICE"
+		exit 4
+	fi
+
+	LOOP_DEVICE=$(losetup -f --show -P "$DEST_IMAGE")
+	if [ $? -ne 0 ]; then
+		echo "Could not remount loop device $LOOP_DEVICE"
+		exit 5
+	fi
+
+	SQUASHFS_PARTITION="${LOOP_DEVICE}p2"
+	FAT_PARTITION="${LOOP_DEVICE}p1"
+	echo "squashfs partition after remount: $SQUASHFS_PARTITION"
+	echo "fat partition: after remount $FAT_PARTITION"
+
+	sleep 1
 fi
+
 
 if [ ! -b "$SQUASHFS_PARTITION" ]; then
 	echo "Could not find expected partition $SQUASHFS_PARTITION"

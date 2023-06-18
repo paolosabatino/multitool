@@ -1,0 +1,25 @@
+#!/bin/bash
+
+echo "Installing u-boot.itb for rockchip rk3528 platform"
+cp "${TS_SOURCES_PATH}/${UBOOT_IMAGE}" "${DIST_PATH}/uboot.img"
+
+if [ $? -ne 0 ]; then
+	echo "Could not create uboot.img"
+	exit 18
+fi
+
+dd if="${DIST_PATH}/uboot.img" of="$LOOP_DEVICE" seek=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install uboot.img"
+	exit 19
+fi
+
+echo "Installing ${IDBLOADER}"
+
+dd if="${TS_SOURCES_PATH}/${IDBLOADER}" of="$LOOP_DEVICE" seek=$((0x40)) conv=sync,fsync >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "Could not install ${IDBLOADER}"
+	exit 22
+fi
