@@ -32,49 +32,60 @@ ntpd -g -G
 #setsid getty --autologin root ttyS2 &
 getty --autologin root ttyS2 &
 
-# Check if the fat partition requires a resize
-DEVICE_FAT_PARTITION=$(blkid --label "MULTITOOL" -l) # eg: /dev/mmcblk0p2
+# Check if the multitool "MT" partition requires a resize
+DEVICE_MT_PARTITION=$(blkid --label "MULTITOOL" -l) # eg: /dev/mmcblk0p2
+BOOT_DEVICE="/dev/$(lsblk -n -o PKNAME $DEVICE_MT_PARTITION)"
 
-CLASS_FAT_PARTITION="/sys/class/block/$(lsblk -n -o KNAME $DEVICE_FAT_PARTITION)" # eg: /sys/class/block/mmcblk0p2
-CLASS_BOOT_DEVICE="/sys/class/block/$(lsblk -n -o PKNAME $DEVICE_FAT_PARTITION)" # eg: /sys/class/block/mmcblk0
+CLASS_MT_PARTITION="/sys/class/block/$(lsblk -n -o KNAME $DEVICE_MT_PARTITION)" # eg: /sys/class/block/mmcblk0p2
+CLASS_BOOT_DEVICE="/sys/class/block/$(lsblk -n -o PKNAME $DEVICE_MT_PARTITION)" # eg: /sys/class/block/mmcblk0
 
-if [ -b "${DEVICE_FAT_PARTITION}" ]; then
+if [ -b "${DEVICE_MT_PARTITION}" ]; then
 
 	MAX_DIFF_SPACE=$((1024 * 1024)) # a difference in spare space greater than this amount
 					# triggers a resize (1 GB)
 
-	THRES_DIFF_SPACE=$((128 * 1024)) # fill the FAT partition up to this space (max - 128 MB)
+	THRES_DIFF_SPACE=$((128 * 1024)) # fill the MULTITOOL partition up to this space (max - 128 MB)
 	
-	FAT_PARTITION_START=$(cat "$CLASS_FAT_PARTITION/start") # sectors
-	FAT_PARTITION_SIZE=$(cat "$CLASS_FAT_PARTITION/size") # sectors
+	MT_PARTITION_NUMBER=$(cat "$CLASS_MT_PARTITION/partition") # partition number
+	MT_PARTITION_START=$(cat "$CLASS_MT_PARTITION/start") # sectors
+	MT_PARTITION_SIZE=$(cat "$CLASS_MT_PARTITION/size") # sectors
 
 	DEVICE_SIZE=$(cat "$CLASS_BOOT_DEVICE/size")
-	SPARE_SPACE=$(($DEVICE_SIZE - $FAT_PARTITION_START))
+	SPARE_SPACE=$(($DEVICE_SIZE - $MT_PARTITION_START))
 
 	SPARE_SPACE=$(($DEVICE_SIZE / 2)) # sectors / 2 = kbytes
-	FAT_PARTITION_SIZE=$(($FAT_PARTITION_SIZE / 2)) # sectors / 2 = kbytes
+	MT_PARTITION_SIZE=$(($MT_PARTITION_SIZE / 2)) # sectors / 2 = kbytes
 
-	DIFF_SPACE=$(($SPARE_SPACE - $FAT_PARTITION_SIZE))
+	DIFF_SPACE=$(($SPARE_SPACE - $MT_PARTITION_SIZE))
 
 	if [ $DIFF_SPACE -gt $MAX_DIFF_SPACE ]; then
 
-		dialog --infobox "Please wait some seconds, resizing FAT partition..." 5 60 <> /dev/tty1 >&0 2>&1
+		dialog --infobox "Please wait some seconds, resizing MULTITOOL partition..." 5 60 <> /dev/tty1 >&0 2>&1
+		
+		parted "$BOOT_DEVICE" resizepart $MT_PARTITION_NUMBER 100%
+		
+		ERR=$?
 
-		fatresize -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))ki "${DEVICE_FAT_PARTITION}"
+		if [ $ERR -ne 0 ]; then
+			dialog --msgbox "Could not resize MULTITOOL partition, parted error $ERR" 7 60 <> /dev/tty1 >&0 2>&1
+		fi
+
+		#fatresize -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))ki "${DEVICE_MT_PARTITION}"
+		echo "y" | ntfsresize -f -P -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))k -P "${DEVICE_MT_PARTITION}" >/dev/null
 
 		ERR=$?
 
 		if [ $ERR -ne 0 ]; then
-			dialog --msgbox "Could not resize FAT partition, error $ERR occurred" 7 60 <> /dev/tty1 >&0 2>&1
+			dialog --msgbox "Could not resize MULTITOOL partition, ntfsresize error $ERR" 7 60 <> /dev/tty1 >&0 2>&1
 		fi
 
 	fi
 
 fi
 
-# Mount the FAT partition to write dmesg log on it,
+# Mount the MULTITOOL partition to write dmesg log on it,
 # then immediately unmounts it
-mount "$DEVICE_FAT_PARTITION" "/mnt"
+mount "$DEVICE_MT_PARTITION" "/mnt"
 if [[ $? -eq 0 ]]; then
 	dmesg > /mnt/dmesg.multitool.log
 	umount "/mnt"

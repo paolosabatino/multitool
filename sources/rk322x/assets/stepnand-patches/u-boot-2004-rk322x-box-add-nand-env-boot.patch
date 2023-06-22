@@ -1,0 +1,14 @@
+diff --git a/include/configs/rk322x_common.h b/include/configs/rk322x_common.h
+index d9935dd..06a33f7 100644
+--- a/include/configs/rk322x_common.h
++++ b/include/configs/rk322x_common.h
+@@ -58,7 +58,8 @@
+ 	ENV_MEM_LAYOUT_SETTINGS \
+ 	ROCKCHIP_DEVICE_SETTINGS \
+ 	RKIMG_DET_BOOTDEV \
+-	BOOTENV
++	BOOTENV \
++	"rknand_boot=if rknand dev ${devnum}; then setenv devtype rknand; run scan_dev_for_boot_part; fi"
+ #endif
+ 
+ #define CONFIG_PREBOOT
