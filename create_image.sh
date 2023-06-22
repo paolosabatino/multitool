@@ -110,7 +110,7 @@ START_ROOTFS=$BEGIN_USER_PARTITIONS
 END_ROOTFS=$(($START_ROOTFS + $ROOTFS_SECTORS - 1))
 START_FAT=$(($END_ROOTFS + 1))
 END_FAT=$(($START_FAT + 131072)) # 131072 sectors = 64Mb
-START_NTFS=$(($END_FAT + 1))
+START_NTFS=$(($END_FAT + 16))
 parted -s -- "$LOOP_DEVICE" unit s mkpart primary fat32 $START_FAT $END_FAT >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not create fat partition"
@@ -211,7 +211,7 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Formatting NTFS partition"
-mkfs.ntfs -f -L "MULTITOOL" -s 4096 -c 16384 "$NTFS_PARTITION" >/dev/null 2>&1
+mkfs.ntfs -f -L "MULTITOOL" -p $START_NTFS -H 65535 -S 65535 -c 16384 "$NTFS_PARTITION" >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Could not format NTFS partition"
