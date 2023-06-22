@@ -55,10 +55,10 @@ is in an unknown format and cannot be decompressed.\n"
 
 CHOICE_FILE="/tmp/choice"
 
-# The FAT partition must have MULTITOOL label name. blkid is handy in this case because it will detect
-# the FAT partition on any device (mmc/usb) it is
-FAT_PARTITION=$(blkid -l --label "MULTITOOL")
-BOOT_DEVICE="/dev/$(lsblk -n -o PKNAME $FAT_PARTITION)"
+# The FAT/NTFS/EXT partition must have MULTITOOL label name. blkid is handy in this case because it will detect
+# the FAT/NTFS/EXT partition on any device (mmc/usb) it is
+MULTITOOL_PARTITION=$(blkid -l --label "MULTITOOL")
+BOOT_DEVICE="/dev/$(lsblk -n -o PKNAME $MULTITOOL_PARTITION)"
 
 MOUNT_POINT="/mnt"
 WORK_LED="/sys/class/leds/led:state1"
@@ -118,24 +118,24 @@ function get_block_device() {
 
 }
 
-# Mounts FAT partition on /mnt to allow operations on it
-function mount_fat_partition() {
+# Mounts MULTITOOL partition on /mnt to allow operations on it
+function mount_mt_partition() {
 
     # Try to do a remount: if partition is already mounted
     # it will succeed, otherwise we will try to mount again
     # but regularly this time.
-    mount "$FAT_PARTITION" "$MOUNT_POINT" -o remount > /dev/null 2>/dev/null
+    mount "$MULTITOOL_PARTITION" "$MOUNT_POINT" -o remount > /dev/null 2>/dev/null
     [[ $? -eq 0 ]] && return 0
 
-    mount "$FAT_PARTITION" "$MOUNT_POINT" > /dev/null 2>/dev/null
+    mount "$MULTITOOL_PARTITION" "$MOUNT_POINT" > /dev/null 2>/dev/null
     [[ $? -eq 0 ]] && return 0
 
     return 1
 
 }
 
-# Unmounts FAT partition
-function unmount_fat_partition() {
+# Unmounts MULTITOOL partition
+function unmount_mt_partition() {
 
     umount "$MOUNT_POINT" 2>/dev/null
 
@@ -143,8 +143,8 @@ function unmount_fat_partition() {
 
 }
 
-# Creates the directory "backups" on the FAT mount point if it does not already exists.
-# Requires the FAT partition to be already mounted
+# Creates the directory "backups" on the MULTITOOL mount point if it does not already exists.
+# Requires the MULTITOOL partition to be already mounted
 function prepare_backup_directory() {
 
     mkdir -p "$MOUNT_POINT/backups"
@@ -389,12 +389,12 @@ function do_backup() {
 
     BACKUP_PATH="${MOUNT_POINT}/backups/${BACKUP_FILENAME}.gz"
 
-    # Mount the fat partition
-    mount_fat_partition
+    # Mount the multitool partition
+    mount_mt_partition
 
     if [ $? -ne 0 ]; then
-        inform_wait "There has been an error mounting the FAT partition, backup aborted"
-        unmount_fat_partition
+        inform_wait "There has been an error mounting the MULTITOOL partition, backup aborted"
+        unmount_mt_partition
         return 1
     fi
 
@@ -402,8 +402,8 @@ function do_backup() {
     prepare_backup_directory
 
     if [ $? -ne 0 ]; then
-        inform_wait "Could not create backups directory on FAT partion, backup aborted"
-        unmount_fat_partition
+        inform_wait "Could not create backups directory on MULTITOOL partion, backup aborted"
+        unmount_mt_partition
         return 1
     fi
 
@@ -414,7 +414,7 @@ function do_backup() {
             --yesno "A backup file with the same name already exists, do you want to proceed to overwrite it?" 7 60
 
         if [ $? -ne 0 ]; then
-            unmount_fat_partition
+            unmount_mt_partition
             return 2
         fi
     fi
@@ -430,11 +430,11 @@ function do_backup() {
 
     if [ $ERR -ne 0 ]; then
         inform_wait "An error occurred ($ERR) while backing up the device, backup aborted"
-        unmount_fat_partition
+        unmount_mt_partition
         return 1
     fi
 
-    unmount_fat_partition
+    unmount_mt_partition
 
     inform_wait "Backup has been completed!"
 
@@ -466,33 +466,33 @@ function do_restore() {
     BLK_DEVICE=$(get_block_device $RESTORE_DEVICE)
     DEVICE_NAME=$(echo $BASENAME | cut -d ":" -f 1)
 
-    # Mount the fat partition
-    mount_fat_partition
+    # Mount the multitool partition
+    mount_mt_partition
 
     if [ $? -ne 0 ]; then
-        inform_wait "There has been an error mounting the FAT partition, restore cannot continue"
-        unmount_fat_partition
+        inform_wait "There has been an error mounting the MULTITOOL partition, restore cannot continue"
+        unmount_mt_partition
         return 1
     fi
 
-    # Search the backup path on the FAT partition
+    # Search the backup path on the MULTITOOL partition
     if [ ! -d "${MOUNT_POINT}/backups" ]; then
-        unmount_fat_partition
-                inform_wait "There are no backups on FAT partition, restore cannot continue"
+        unmount_mt_partition
+                inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
         return 3
         fi
 
     BACKUP_COUNT=$(find "${MOUNT_POINT}/backups" -iname '*.gz' | wc -l)
     if [ $BACKUP_COUNT -eq 0 ]; then
-        unmount_fat_partition
-        inform_wait "There are no backups on FAT partition, restore cannot continue"
+        unmount_mt_partition
+        inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
         return 3
         fi
 
     RESTORE_SOURCE=$(choose_file "Restore a backup image to $BLK_DEVICE" "Choose a backup image" "${MOUNT_POINT}/backups/*.gz")
 
     if [ $? -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         return 2
     fi
 
@@ -509,12 +509,12 @@ function do_restore() {
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         inform_wait "An error occurred ($ERR) restoring backup, process has not been completed"
         return 1
     fi
 
-    unmount_fat_partition
+    unmount_mt_partition
 
     inform_wait "Backup restored to device $BLK_DEVICE"
 
@@ -710,33 +710,33 @@ function do_burn() {
     BLK_DEVICE=$(get_block_device $TARGET_DEVICE)
     DEVICE_NAME=$(echo $BASENAME | cut -d ":" -f 1)
 
-    # Mount the fat partition
-    mount_fat_partition
+    # Mount the multitool partition
+    mount_mt_partition
 
     if [ $? -ne 0 ]; then
-        inform_wait "There has been an error mounting the FAT partition."
-        unmount_fat_partition
+        inform_wait "There has been an error mounting the MULTITOOL partition."
+        unmount_mt_partition
         return 1
     fi
 
-    # Search the images path on the FAT partition
+    # Search the images path on the MULTITOOL partition
     if [ ! -d "${MOUNT_POINT}/images" ]; then
-        unmount_fat_partition
-                inform_wait "There are no images on FAT partition."
+        unmount_mt_partition
+                inform_wait "There are no images on MULTITOOL partition."
         return 3
         fi
 
     IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -type f -iname '*' 2>/dev/null | wc -l)
     if [ $IMAGES_COUNT -eq 0 ]; then
-        unmount_fat_partition
-        inform_wait "There are no images on FAT partition."
+        unmount_mt_partition
+        inform_wait "There are no images on MULTITOOL partition."
         return 3
         fi
 
     IMAGE_SOURCE=$(choose_file "Burn an image to $BLK_DEVICE" "Choose the source image file" "${MOUNT_POINT}/images/*")
 
     if [ $? -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         return 2
     fi
 
@@ -748,7 +748,7 @@ function do_burn() {
 
     if [[ $? -ne 0 ]]; then
         inform_wait "$D_ERROR_TEXT"
-        unmount_fat_partition
+        unmount_mt_partition
         return 1
     fi
 
@@ -807,7 +807,7 @@ function do_burn() {
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         inform_wait "An error occurred ($ERR) while burning image, process has not been completed"
         return 1
     fi
@@ -831,7 +831,7 @@ function do_burn() {
         ERR=$?
 
         if [ $ERR -ne 0 ]; then
-            unmount_fat_partition
+            unmount_mt_partition
             inform_wait "An error occurred ($ERR) while restoring partition table, image may not boot"
             return 1
         fi
@@ -840,14 +840,14 @@ function do_burn() {
             ERR=$?
 
         if [ $ERR -ne 0 ]; then
-                unmount_fat_partition
+                unmount_mt_partition
                 inform_wait "An error occurred ($ERR) while burning bootloader on device, image may not boot"
                 return 1
         fi
                 
     fi
 
-    unmount_fat_partition
+    unmount_mt_partition
 
     inform_wait "Image has been burned to device $BLK_DEVICE"
 
@@ -875,33 +875,33 @@ function do_install_stepnand() {
     BLK_DEVICE=$(get_block_device $TARGET_DEVICE)
     DEVICE_NAME=$(echo $BASENAME | cut -d ":" -f 1)
 
-    # Mount the fat partition
-    mount_fat_partition
+    # Mount the multitool partition
+    mount_mt_partition
 
     if [ $? -ne 0 ]; then
-        inform_wait "There has been an error mounting the FAT partition."
-        unmount_fat_partition
+        inform_wait "There has been an error mounting the MULTITOOL partition."
+        unmount_mt_partition
         return 1
     fi
 
-    # Search the images path on the FAT partition
+    # Search the images path on the MULTITOOL partition
     if [ ! -d "${MOUNT_POINT}/images" ]; then
-        unmount_fat_partition
-                inform_wait "There are no images on FAT partition."
+        unmount_mt_partition
+                inform_wait "There are no images on MULTITOOL partition."
         return 3
         fi
 
     IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -type f -iname '*' 2>/dev/null | wc -l)
     if [ $IMAGES_COUNT -eq 0 ]; then
-        unmount_fat_partition
-        inform_wait "There are no images on FAT partition."
+        unmount_mt_partition
+        inform_wait "There are no images on MULTITOOL partition."
         return 3
         fi
 
     IMAGE_SOURCE=$(choose_file "Burn Armbian image via steP-nand to $BLK_DEVICE" "Choose the source image file" "${MOUNT_POINT}/images/*")
 
     if [ $? -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         return 2
     fi
 
@@ -913,7 +913,7 @@ function do_install_stepnand() {
 
     if [[ $? -ne 0 ]]; then
         inform_wait "$D_ERROR_TEXT"
-        unmount_fat_partition
+        unmount_mt_partition
         return 1
     fi
 
@@ -938,7 +938,7 @@ function do_install_stepnand() {
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         inform_wait "An error occurred ($ERR) while burning image, process has not been completed"
         return 1
     fi
@@ -949,7 +949,7 @@ function do_install_stepnand() {
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         inform_wait "An error occurred ($ERR) while burning bootloader on device, process has not been completed"
         return 1
     fi
@@ -958,7 +958,7 @@ function do_install_stepnand() {
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         inform_wait "An error occurred ($ERR) while burning TEE on device, process has not been completed"
         return 1
     fi
@@ -976,12 +976,12 @@ function do_install_stepnand() {
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
-        unmount_fat_partition
+        unmount_mt_partition
         inform_wait "An error occurred ($ERR) while creating GPT partition table, process has not been completed"
         return 1
     fi
 
-    unmount_fat_partition
+    unmount_mt_partition
 
     inform_wait "Image has been burned to device $BLK_DEVICE"
 
@@ -1141,7 +1141,7 @@ function do_give_shell() {
 
 function do_reboot() {
 
-    unmount_fat_partition
+    unmount_mt_partition
 
     sleep 1
 
@@ -1151,7 +1151,7 @@ function do_reboot() {
 
 function do_shutdown() {
 
-    unmount_fat_partition
+    unmount_mt_partition
 
     sleep 1
 
@@ -1161,7 +1161,7 @@ function do_shutdown() {
 
 # ----- Entry point -----
 
-mount_fat_partition
+mount_mt_partition
 
 ISSUE=$(</mnt/ISSUE)
 TARGET_CONF=$(</mnt/TARGET)
@@ -1171,7 +1171,7 @@ BACKTITLE="$BACKTITLE - Platform: $TARGET_CONF - Build: $ISSUE"
 dialog --backtitle "$BACKTITLE" \
     --textbox "/mnt/LICENSE" 0 0
 
-unmount_fat_partition
+unmount_mt_partition
 
 find_mmc_devices
 find_special_devices
