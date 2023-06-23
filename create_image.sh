@@ -1,5 +1,15 @@
 #!/bin/bash
 
+function round_sectors() {
+
+	SECTORS="$1"
+
+	ROUNDED=$(((($SECTORS / 8) + 1) * 8))
+
+	echo $ROUNDED
+
+}
+
 CWD=$(pwd)
 SOURCES_PATH="$CWD/sources"
 TOOLS_PATH="$CWD/tools"
@@ -70,8 +80,8 @@ if [ ! -f "$DIST_PATH/root.img" ]; then
 fi
 
 ROOTFS_SIZE=$(du "$DIST_PATH/root.img" | cut -f 1)
-ROOTFS_SIZE=$(((($ROOTFS_SIZE / 1024) + 1) * 1024))
 ROOTFS_SECTORS=$(($ROOTFS_SIZE * 2))
+ROOTFS_SECTORS=$(round_sectors $ROOTFS_SECTORS)
 
 if [ $? -ne 0 ]; then
 	echo -e "\ncould not determine size of squashfs root filesystem"
@@ -108,18 +118,18 @@ fi
 
 START_ROOTFS=$BEGIN_USER_PARTITIONS
 END_ROOTFS=$(($START_ROOTFS + $ROOTFS_SECTORS - 1))
-START_FAT=$(($END_ROOTFS + 1))
-END_FAT=$(($START_FAT + 131072)) # 131072 sectors = 64Mb
-START_NTFS=$(($END_FAT + 16))
-parted -s -- "$LOOP_DEVICE" unit s mkpart primary fat32 $START_FAT $END_FAT >/dev/null 2>&1
-if [ $? -ne 0 ]; then
-	echo "Could not create fat partition"
-	exit 3
-fi
-
+START_FAT=$(round_sectors $END_ROOTFS)
+END_FAT=$(($START_FAT + 131072 - 1)) # 131072 sectors = 64Mb
+START_NTFS=$(round_sectors $END_FAT)
 parted -s -- "$LOOP_DEVICE" unit s mkpart primary ntfs $START_NTFS -1s >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not create ntfs partition"
+	exit 3
+fi
+
+parted -s -- "$LOOP_DEVICE" unit s mkpart primary fat32 $START_FAT $END_FAT >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+	echo "Could not create fat partition"
 	exit 3
 fi
 
@@ -130,7 +140,7 @@ if [ $? -ne 0 ]; then
 fi
 
 
-parted -s -- "$LOOP_DEVICE" set 1 boot on set 2 boot off set 3 boot off >/dev/null 2>&1
+parted -s -- "$LOOP_DEVICE" set 1 boot off set 2 boot on set 3 boot off >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not set partition flags"
 	exit 28
@@ -143,8 +153,8 @@ sleep 1
 # spawns as soon as they are created. We check their presence. If they already
 # are there, we don't remount the device
 SQUASHFS_PARTITION="${LOOP_DEVICE}p3"
-NTFS_PARTITION="${LOOP_DEVICE}p2"
-FAT_PARTITION="${LOOP_DEVICE}p1"
+NTFS_PARTITION="${LOOP_DEVICE}p1"
+FAT_PARTITION="${LOOP_DEVICE}p2"
 echo "squashfs partition: $SQUASHFS_PARTITION"
 echo "fat partition: $FAT_PARTITION"
 echo "ntfs partition: $NTFS_PARTITION"
@@ -166,8 +176,8 @@ if [ ! -b "$SQUASHFS_PARTITION" -o ! -b "$FAT_PARTITION" -o ! -b "$NTFS_PARTITIO
 	fi
 
 	SQUASHFS_PARTITION="${LOOP_DEVICE}p3"
-	NTFS_PARTITION="${LOOP_DEVICE}p2"
-	FAT_PARTITION="${LOOP_DEVICE}p1"
+	NTFS_PARTITION="${LOOP_DEVICE}p1"
+	FAT_PARTITION="${LOOP_DEVICE}p2"
 	echo "squashfs partition after remount: $SQUASHFS_PARTITION"
 	echo "fat partition: after remount $FAT_PARTITION"
 	echo "ntfs partition: after remount $NTFS_PARTITION"
@@ -192,7 +202,7 @@ if [ ! -b "$NTFS_PARTITION" ]; then
 fi
 
 echo "Copying squashfs rootfilesystem"
-dd if="${DIST_PATH}/root.img" of="$SQUASHFS_PARTITION" bs=256k conv=sync,fsync >/dev/null 2>&1
+dd if="${DIST_PATH}/root.img" of="$SQUASHFS_PARTITION" bs=4k conv=sync,fsync >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Could not install squashfs filesystem"

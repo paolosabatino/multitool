@@ -59,25 +59,45 @@ if [ -b "${DEVICE_MT_PARTITION}" ]; then
 	DIFF_SPACE=$(($SPARE_SPACE - $MT_PARTITION_SIZE))
 
 	if [ $DIFF_SPACE -gt $MAX_DIFF_SPACE ]; then
+	
+		# While true; used for convenient break syntax
+		while true; do
 
-		dialog --infobox "Please wait some seconds, resizing MULTITOOL partition..." 5 60 <> /dev/tty1 >&0 2>&1
-		
-		parted "$BOOT_DEVICE" resizepart $MT_PARTITION_NUMBER 100%
-		
-		ERR=$?
+			dialog --infobox "Please wait some seconds, resizing MULTITOOL partition..." 5 60 <> /dev/tty1 >&0 2>&1
+			
+			# Resize the partition up to the end of the device size
+			parted "$BOOT_DEVICE" resizepart $MT_PARTITION_NUMBER 100%
+			
+			ERR=$?
 
-		if [ $ERR -ne 0 ]; then
-			dialog --msgbox "Could not resize MULTITOOL partition, parted error $ERR" 7 60 <> /dev/tty1 >&0 2>&1
-		fi
+			if [ $ERR -ne 0 ]; then
+				dialog --msgbox "Could not resize MULTITOOL partition, parted error $ERR" 7 60 <> /dev/tty1 >&0 2>&1
+				break
+			fi
 
-		#fatresize -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))ki "${DEVICE_MT_PARTITION}"
-		echo "y" | ntfsresize -f -P -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))k -P "${DEVICE_MT_PARTITION}" >/dev/null
+			# Resize the NTFS filesystem inside the partition
+			echo "y" | ntfsresize -f -P -s $(($SPARE_SPACE - $THRES_DIFF_SPACE))k -P "${DEVICE_MT_PARTITION}" >/dev/null
 
-		ERR=$?
+			ERR=$?
 
-		if [ $ERR -ne 0 ]; then
-			dialog --msgbox "Could not resize MULTITOOL partition, ntfsresize error $ERR" 7 60 <> /dev/tty1 >&0 2>&1
-		fi
+			if [ $ERR -ne 0 ]; then
+				dialog --msgbox "Could not resize MULTITOOL partition, ntfsresize error $ERR" 7 60 <> /dev/tty1 >&0 2>&1
+				break
+			fi
+			
+			# Fix the dirty NTFS bits after resize operation
+			ntfsfix -d "${DEVICE_MT_PARTITION}" >/dev/null
+			
+			ERR=$?
+
+			if [ $ERR -ne 0 ]; then
+				dialog --msgbox "Could not fix ntfs partition after ntfsfix, error $ERR" 7 60 <> /dev/tty1 >&0 2>&1
+				break
+			fi
+			
+			break
+			
+		done
 
 	fi
 
