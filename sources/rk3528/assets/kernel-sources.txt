@@ -1,0 +1,5 @@
+Good kernel candidates:
+
+https://github.com/armbian/linux-rockchip - branch rk-5.10-rkr4 - commit 5527fc11dee7c4f22fe6e0ed3735c8af4ce0017b
+
+https://github.com/radxa/kernel - branch linux-5.10-gen-rkr4.1 - commit aa2d41cc012d36269f04ae410dc8a9afac3bcef9

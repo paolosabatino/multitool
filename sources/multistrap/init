@@ -117,6 +117,12 @@ if [[ -f /usr/local/bin/multitool.sh ]]; then
 	done
 fi
 
+# Use tty1 as default console 
+TTY_SERIAL="tty1"
+
+# If kernel uses ttyFIQ0 as console, tell getty to use the same device
+grep -q 'console=ttyFIQ0' /proc/cmdline && TTY_SERIAL="ttyFIQ0"
+
 while true; do
-	setsid getty --autologin root tty1
+	setsid getty --autologin root $TTY_SERIAL
 done
