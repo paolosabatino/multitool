@@ -121,6 +121,7 @@ END_ROOTFS=$(($START_ROOTFS + $ROOTFS_SECTORS - 1))
 START_FAT=$(round_sectors $END_ROOTFS)
 END_FAT=$(($START_FAT + 131072 - 1)) # 131072 sectors = 64Mb
 START_NTFS=$(round_sectors $END_FAT)
+
 parted -s -- "$LOOP_DEVICE" unit s mkpart primary ntfs $START_NTFS -1s >/dev/null 2>&1
 if [ $? -ne 0 ]; then
 	echo "Could not create ntfs partition"
@@ -246,6 +247,44 @@ if [ $? -ne 0 ]; then
 	exit 28
 fi
 
+# ===============================================================
+# CRIANDO ARQUIVO DE CRÉDITOS E LICENÇA INDICANDO QUE FORAM
+# FEITAS MODIFICAÇÕES NO SOFTWARE ORIGINAL PARA O PROJETO TVBOX
+# ===============================================================
+
+echo "Creating CREDITS file"
+
+# Define o caminho do novo arquivo dentro da imagem
+CREDITS_FILE="${TEMP_DIR}/CREDITS"
+
+# Pega a data e hora atual do sistema
+BUILD_DATE=$(date)
+
+# 1. Cria o arquivo NOVO e escreve o cabeçalho da modificação primeiro.
+echo "===========================================================================" > "${CREDITS_FILE}"
+echo "This software has been modified by Pedro Rigolin for the TVBox Project" >> "${CREDITS_FILE}"
+echo "at the Instituto Federal de São Paulo - IFSP, Salto campus." >> "${CREDITS_FILE}"
+echo "" >> "${CREDITS_FILE}"
+echo "TVBox Project Mod Version: 1.0" >> "${CREDITS_FILE}"
+echo "Build Date: ${BUILD_DATE}" >> "${CREDITS_FILE}"
+echo "" >> "${CREDITS_FILE}"
+echo "- Original Multitool Repository (Paolo Sabatino):" >> "${CREDITS_FILE}"
+echo "  https://github.com/paolosabatino/multitool" >> "${CREDITS_FILE}"
+echo "" >> "${CREDITS_FILE}"
+echo "- Projeto TVBox Fork Repository:" >> "${CREDITS_FILE}"
+echo "  [LINK FUTURO]" >> "${CREDITS_FILE}"
+echo "===========================================================================" >> "${CREDITS_FILE}"
+echo "" >> "${CREDITS_FILE}"
+
+# 2. AGORA, adiciona o conteúdo da licença original NO FINAL do seu cabeçalho modificado.
+echo "Original license text follows:" >> "${CREDITS_FILE}"
+echo "--------------------------------" >> "${CREDITS_FILE}"
+echo "" >> "${CREDITS_FILE}"
+
+cat "${TEMP_DIR}/LICENSE" >> "${CREDITS_FILE}"
+
+# =============================================================
+
 git log --no-merges --pretty="%as: %s" > "${TEMP_DIR}/CHANGELOG"
 if [ $? -ne 0 ]; then
 	echo "Could not store CHANGELOG to partition"
@@ -278,6 +317,16 @@ if [ $? -ne 0 ]; then
 	echo "Could not create bsp directory"
 	exit 30
 fi
+
+# TODO: CRIAR UM JEITO DE PERMITIR QUE O NOME DO ARQUIVO POSSA SER ALTERADO NA CHAMADA DO BUILD
+# Create the auto_restore.flag file to enable automatic restore on boot
+# The default image to restore is armbian_tvbox.img, but it can be changed
+# by the user by simply editing the auto_restore.flag file or change it 
+# from the multitool GUI, which will edit the file accordingly
+#
+# @author: Pedro Rigolin
+echo "Creating auto_restore.flag"
+echo -n "armbian_tvbox.img" > "${TEMP_DIR}/auto_restore.flag"
 
 echo "Copying board support package blobs into bsp directory"
 cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"

@@ -8,7 +8,7 @@ else
 	TTY_CONSOLE="/dev/tty$(fgconsole)"
 fi
 
-BACKTITLE="SD/eMMC/NAND card helper Multitool for TV Boxes and alike - Paolo Sabatino"
+BACKTITLE="TVBox Project - IFSP Salto | Multitool by Paolo Sabatino"
 TITLE_MAIN_MENU="Multitool Menu"
 
 ISSUE="unknown" # Will be read later from /mnt/ISSUE
@@ -253,6 +253,11 @@ function set_command_rate() {
 function set_led_state() {
 
     echo $1 > "$WORK_LED/trigger"
+
+    # if [ -w "$WORK_LED/trigger" ]; then
+    #     # Se existir, aí sim, executa o comando
+    #     echo $1 > "$WORK_LED/trigger"
+    # fi
 
 }
 
@@ -517,6 +522,54 @@ function do_restore() {
     unmount_mt_partition
 
     inform_wait "Backup restored to device $BLK_DEVICE"
+
+    return 0
+
+}
+
+# Set an automatic restore at next boot
+#
+# @author Pedro Rigolin
+function set_auto_restore() {
+
+    # Mount the multitool partition
+    mount_mt_partition
+
+    if [ $? -ne 0 ]; then
+        inform_wait "There has been an error mounting the MULTITOOL partition, restore cannot continue"
+        unmount_mt_partition
+        return 1
+    fi
+
+    # Search the backup path on the MULTITOOL partition
+    if [ ! -d "${MOUNT_POINT}/backups" ]; then
+        unmount_mt_partition
+        inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
+        return 3
+    fi
+
+    BACKUP_COUNT=$(find "${MOUNT_POINT}/backups" -iname '*.gz' | wc -l)
+    
+    if [ $BACKUP_COUNT -eq 0 ]; then
+        unmount_mt_partition
+        inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
+        return 3
+    fi
+
+    RESTORE_SOURCE=$(choose_file "Set auto-restore file" "Choose a backup image for next boot" "${MOUNT_POINT}/backups/*.gz")
+
+    if [ $? -ne 0 ]; then
+        unmount_mt_partition
+        return 2
+    fi
+
+    BACKUP_FILENAME=$(basename "$RESTORE_SOURCE")
+
+    echo -n "$BACKUP_FILENAME" > "${MOUNT_POINT}/auto_restore.flag"
+
+    unmount_mt_partition
+
+    inform_wait "Auto-restore set to: $BACKUP_FILENAME\n\nIt will be restored on the next boot."
 
     return 0
 
@@ -1161,6 +1214,7 @@ function do_shutdown() {
 
 # ----- Entry point -----
 
+# Mount the multitool partition
 mount_mt_partition
 
 ISSUE=$(</mnt/ISSUE)
@@ -1168,9 +1222,61 @@ TARGET_CONF=$(</mnt/TARGET)
 
 BACKTITLE="$BACKTITLE - Platform: $TARGET_CONF - Build: $ISSUE"
 
+# Show the credits, that can be hold by the user to read them carefull
+# or it can be agreed and closed, or it can be timed out after 5 seconds
 dialog --backtitle "$BACKTITLE" \
-    --textbox "/mnt/LICENSE" 0 0
+    --ok-label "Hold" \
+    --textbox "${MOUNT_POINT}/CREDITS" 0 0
 
+EXIT_CODE=$?
+
+# If the user pressed cancel (hold), we show the credits again and wait for her
+# to press ok
+if [ "$EXIT_CODE" -eq 1 ]; then
+
+    dialog --backtitle "$BACKTITLE" \
+        --ok-label "I Agree" \
+        --textbox "${MOUNT_POINT}/CREDITS" 0 0
+
+fi
+
+# Armazenamos o nome do arquivo de restauração automática
+FLAG_FILE="${MOUNT_POINT}/auto_restore.flag"
+
+# Verifica se existe a flag de auto restore
+if [ -f "$FLAG_FILE" ]; then
+
+    echo "Achou a flag: $FLAG_FILE" > /mnt/debug.log
+
+    # Lê o conteúdo da flag e remove espaços em branco
+    FLAG_CONTENTS=$(cat "$FLAG_FILE" | xargs)
+
+    # Verifica se o conteúdo não está vazio
+    if [ -n "$FLAG_CONTENTS" ]; then
+
+        echo "O arquivo tem o conteudo: $FLAG_CONTENTS" >> /mnt/debug.log
+
+        # Verifica se o arquivo especificado na flag existe
+        RESTORE_FILE="${MOUNT_POINT}/backups/${FLAG_CONTENTS}"
+
+        echo "Essa é o backup que ele procura: $RESTORE_FILE" >> /mnt/debug.log
+
+        # Se o arquivo existe, inicia o processo de restauração
+        if [ -f "$RESTORE_FILE" ]; then
+
+            echo "Achou o backup: $RESTORE_FILE" >> /mnt/debug.log
+
+            dialog --backtitle "$BACKTITLE" \
+                --ok-label "Proceed" \
+                --textbox "Tem arquivo de auto restore!" 0 0 
+
+        fi
+
+    fi
+
+fi
+
+# Unmount the multitool partition
 unmount_mt_partition
 
 find_mmc_devices
@@ -1178,16 +1284,19 @@ find_special_devices
 
 declare -a MENU_ITEMS
 
+#?? ESTÁ MOSTRANDO O MENU DE CRÉDITOS NA PRIMEIRA VEZ QUE CHAMA A FUNÇÃO SET AUTO RESTORE??
+
 MENU_ITEMS+=(1 "Backup flash")
 MENU_ITEMS+=(2 "Restore flash")
 MENU_ITEMS+=(3 "Erase flash")
 MENU_ITEMS+=(4 "Drop to Bash shell")
 MENU_ITEMS+=(5 "Burn image to flash")
-[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(6 "Install Jump start on NAND")
-[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(7 "Install Armbian via steP-nand")
-[[ ! "${DEVICES_MMC[@]}" =~ "nandc" && "${TARGET_CONF}" = "rk322x" ]] && MENU_ITEMS+=(A "Change DDR Command Rate")
-MENU_ITEMS+=(8 "Reboot")
-MENU_ITEMS+=(9 "Shutdown")
+MENU_ITEMS+=(6 "Configure auto restore file image")
+[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(7 "Install Jump start on NAND")
+[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(8 "Install Armbian via steP-nand")
+[[ ! "${DEVICES_MMC[@]}" =~ "nandc" && "${TARGET_CONF}" = "rk322x" ]] && MENU_ITEMS+=(9 "Change DDR Command Rate")
+MENU_ITEMS+=(A "Reboot")
+MENU_ITEMS+=(B "Shutdown")
 
 MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE_MAIN_MENU" --menu "Choose an option" 24 74 18)
 
@@ -1212,18 +1321,19 @@ while true; do
     elif [[ $CHOICE = "5" ]]; then
         do_burn
     elif [[ $CHOICE = "6" ]]; then
-        do_install_jump_start
+        set_auto_restore
     elif [[ $CHOICE = "7" ]]; then
-        do_install_stepnand
-    elif [[ $CHOICE = "A" ]]; then
-        do_change_command_rate
+        do_install_jump_start
     elif [[ $CHOICE = "8" ]]; then
-        do_reboot
+        do_install_stepnand
     elif [[ $CHOICE = "9" ]]; then
+        do_change_command_rate
+    elif [[ $CHOICE = "A" ]]; then
+        do_reboot
+    elif [[ $CHOICE = "B" ]]; then
         do_shutdown
     fi
 
 done
 
 clear
-
