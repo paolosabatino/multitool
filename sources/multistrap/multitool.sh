@@ -1228,6 +1228,11 @@ dialog --backtitle "$BACKTITLE" \
     --ok-label "Hold" \
     --textbox "${MOUNT_POINT}/CREDITS" 0 0
 
+dialog --backtitle "Olá mundo!" \
+    --ok-label "Hold" \
+    --cancel-label "I Agree" \
+    --textbox "Aqui estão os créditos" 0 0
+
 EXIT_CODE=$?
 
 # If the user pressed cancel (hold), we show the credits again and wait for her
