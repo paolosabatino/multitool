@@ -318,15 +318,20 @@ if [ $? -ne 0 ]; then
 	exit 30
 fi
 
-# TODO: CRIAR UM JEITO DE PERMITIR QUE O NOME DO ARQUIVO POSSA SER ALTERADO NA CHAMADA DO BUILD
+# Image name to restore, passed as the second script parameter
+#
+# @author: Pedro Rigolin
+AUTO_RESTORE_PARAM="$(echo -n "$2" | xargs)"
+
+echo "Auto restore image parameter: $AUTO_RESTORE_PARAM"
+
 # Create the auto_restore.flag file to enable automatic restore on boot
-# The default image to restore is armbian_tvbox.img, but it can be changed
-# by the user by simply editing the auto_restore.flag file or change it 
-# from the multitool GUI, which will edit the file accordingly
+# The image to restore is specified by the user as the second parameter
+# and can be changed by editing the auto_restore.flag file or via the multitool GUI
 #
 # @author: Pedro Rigolin
 echo "Creating auto_restore.flag"
-echo -n "armbian_tvbox.img" > "${TEMP_DIR}/auto_restore.flag"
+echo -n "$2" > "${TEMP_DIR}/auto_restore.flag"
 
 echo "Copying board support package blobs into bsp directory"
 cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"

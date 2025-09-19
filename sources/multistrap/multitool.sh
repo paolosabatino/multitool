@@ -1225,13 +1225,11 @@ BACKTITLE="$BACKTITLE - Platform: $TARGET_CONF - Build: $ISSUE"
 # Show the credits, that can be hold by the user to read them carefull
 # or it can be agreed and closed, or it can be timed out after 5 seconds
 dialog --backtitle "$BACKTITLE" \
-    --ok-label "Hold" \
-    --textbox "${MOUNT_POINT}/CREDITS" 0 0
-
-dialog --backtitle "Olá mundo!" \
-    --ok-label "Hold" \
-    --cancel-label "I Agree" \
-    --textbox "Aqui estão os créditos" 0 0
+       --title "License Agreement" \
+       --timeout 5 \
+       --yes-label "I Agree" \
+       --no-label "See License" \
+       --yesno "\nBy proceeding, you agree to the software license terms.\n\nPress 'See License' to read the full terms." 10 70
 
 EXIT_CODE=$?
 
@@ -1240,7 +1238,7 @@ EXIT_CODE=$?
 if [ "$EXIT_CODE" -eq 1 ]; then
 
     dialog --backtitle "$BACKTITLE" \
-        --ok-label "I Agree" \
+        --exit-label "I Agree" \
         --textbox "${MOUNT_POINT}/CREDITS" 0 0
 
 fi
@@ -1251,29 +1249,21 @@ FLAG_FILE="${MOUNT_POINT}/auto_restore.flag"
 # Verifica se existe a flag de auto restore
 if [ -f "$FLAG_FILE" ]; then
 
-    echo "Achou a flag: $FLAG_FILE" > /mnt/debug.log
-
     # Lê o conteúdo da flag e remove espaços em branco
     FLAG_CONTENTS=$(cat "$FLAG_FILE" | xargs)
 
     # Verifica se o conteúdo não está vazio
     if [ -n "$FLAG_CONTENTS" ]; then
 
-        echo "O arquivo tem o conteudo: $FLAG_CONTENTS" >> /mnt/debug.log
-
         # Verifica se o arquivo especificado na flag existe
         RESTORE_FILE="${MOUNT_POINT}/backups/${FLAG_CONTENTS}"
-
-        echo "Essa é o backup que ele procura: $RESTORE_FILE" >> /mnt/debug.log
 
         # Se o arquivo existe, inicia o processo de restauração
         if [ -f "$RESTORE_FILE" ]; then
 
-            echo "Achou o backup: $RESTORE_FILE" >> /mnt/debug.log
-
             dialog --backtitle "$BACKTITLE" \
-                --ok-label "Proceed" \
-                --textbox "Tem arquivo de auto restore!" 0 0 
+                --exit-label "Proceed" \
+                --msgbox "Tem arquivo de auto restore!" 0 0 
 
         fi
 
