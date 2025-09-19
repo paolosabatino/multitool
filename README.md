@@ -40,7 +40,7 @@ Este fork faz parte do **Projeto TVBox**, desenvolvido por estudantes e pesquisa
 
 ### 🔧 Fork Features | Funcionalidades do Fork
 
-**🆕 New in this fork | Novidades neste fork:**
+**🆕 New in this fork:**
 
 - **🤖 Automatic Restore**: Auto-restore functionality that starts immediately after boot
 - **⏱️ Timed Operation**: 10-second countdown after license dialog (additional 5 seconds if auto-closed)
@@ -48,11 +48,13 @@ Este fork faz parte do **Projeto TVBox**, desenvolvido por estudantes e pesquisa
 - **🚀 Mass Processing**: Streamlined workflow for bulk TV box decharacterization
 - **🛠️ Fixed Dependencies**: Updated Debian repository URLs for reliable builds
 
-**🤖 Restauração Automática**: Funcionalidade de restore automático que inicia imediatamente após o boot  
-**⏱️ Operação Temporizada**: Contagem regressiva de 10 segundos após o diálogo de licença (5 segundos adicionais se fechado automaticamente)  
-**📁 Seleção de Backup**: Seleção de arquivo de backup através do menu da interface original do multitool  
-**🚀 Processamento em Massa**: Fluxo de trabalho otimizado para descaracterização em lote de TV boxes  
-**🛠️ Dependências Corrigidas**: URLs dos repositórios Debian atualizadas para builds confiáveis
+**🆕 Novidades neste fork:**
+
+- **🤖 Restauração Automática**: Funcionalidade de restore automático que inicia imediatamente após o boot  
+- **⏱️ Operação Temporizada**: Contagem regressiva de 10 segundos após o diálogo de licença (5 segundos adicionais se fechado automaticamente)  
+- **📁 Seleção de Backup**: Seleção de arquivo de backup através do menu da interface original do multitool  
+- **🚀 Processamento em Massa**: Fluxo de trabalho otimizado para descaracterização em lote de TV boxes  
+- **🛠️ Dependências Corrigidas**: URLs dos repositórios Debian atualizadas para builds confiáveis
 
 ---
 
