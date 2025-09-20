@@ -1,2 +1,13 @@
 dist-*
 sources/multistrap/rootfs/
+test*
+testes*
+test/
+test/**
+testes/
+testes/**
+auto_restore.flag
+backup/
+backup/**
+backups/
+backups/**

@@ -541,40 +541,111 @@ function set_auto_restore() {
     mount_mt_partition
 
     if [ $? -ne 0 ]; then
-        inform_wait "There has been an error mounting the MULTITOOL partition, restore cannot continue"
+
+        inform_wait "There has been an error mounting the MULTITOOL partition, process cannot continue"
+        
         unmount_mt_partition
+
         return 1
+
     fi
 
-    # Search the backup path on the MULTITOOL partition
-    if [ ! -d "${MOUNT_POINT}/backups" ]; then
+    # Prepare variables for the dialog menu
+    declare -a FILES
+
+    declare -a STR_FILES
+
+    local GLOB="${MOUNT_POINT}/*.gz"
+
+    local COUNTER=0
+
+    local FLAG_FILE="${MOUNT_POINT}/auto_restore.flag"
+
+    if [ ! -f "$FLAG_FILE" ]; then
+
+        # If the flag file does not exist, create an empty one
+        echo -n "" > "$FLAG_FILE"
+
+    fi
+
+    local FLAG_CONTENTS=$(cat "$FLAG_FILE" | xargs)
+
+    if [ -n "$FLAG_CONTENTS" ]; then
+
+        # Add the "Unset" option as the first menu item
+        STR_FILES+=("UNSET" "Unset auto-restore (leave flag empty)")
+
+    fi
+
+    # Loop to find backup files and add them to the menu
+    for FILE in $GLOB; do
+
+        if [ -f "$FILE" ]; then
+
+            FILES+=($FILE)
+
+            local BASENAME=$(basename "$FILE")
+
+            STR_FILES+=($COUNTER "$BASENAME")
+
+            COUNTER=$(($COUNTER + 1))
+
+        fi
+
+    done
+
+    if [ ${#STR_FILES[@]} -eq 0 ]; then
+
+        inform_wait "No backup images found in the multitool partition and no auto-restore file is defined.\n\nPlease add .gz files to enable auto-restore."
+        
         unmount_mt_partition
-        inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
-        return 3
+
+        return 1
+
     fi
 
-    BACKUP_COUNT=$(find "${MOUNT_POINT}/backups" -iname '*.gz' | wc -l)
-    
-    if [ $BACKUP_COUNT -eq 0 ]; then
-        unmount_mt_partition
-        inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
-        return 3
-    fi
+    # Build and display the custom menu
+    local TITLE="Set up automatic restore"
 
-    RESTORE_SOURCE=$(choose_file "Set auto-restore file" "Choose a backup image for next boot" "${MOUNT_POINT}/backups/*.gz")
+    local MENU_TITLE="Choose a backup image for next boot or Unset"
 
+    local MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU_TITLE" 24 0 18)
+
+    CHOICE=$("${MENU_CMD[@]}" "${STR_FILES[@]}" 2>&1 >$TTY_CONSOLE)
+
+    # If the user pressed Cancel or ESC, just exit the function
     if [ $? -ne 0 ]; then
+
         unmount_mt_partition
+
         return 2
+
     fi
 
-    BACKUP_FILENAME=$(basename "$RESTORE_SOURCE")
+    # Decision logic based on user choice
+    if [ "$CHOICE" = "UNSET" ]; then
 
-    echo -n "$BACKUP_FILENAME" > "${MOUNT_POINT}/auto_restore.flag"
+        # If chose "UNSET", create an empty flag file
+        echo -n "" > "${MOUNT_POINT}/auto_restore.flag"
 
+        inform_wait "Auto-restore has been UNSET.\n\nThe flag file is now empty."
+
+    else
+
+        # If a file was selected, save the name in the auto restore flag
+        local RESTORE_SOURCE=${FILES[$CHOICE]}
+
+        local BACKUP_FILENAME=$(basename "$RESTORE_SOURCE")
+
+        echo -n "$BACKUP_FILENAME" > "${MOUNT_POINT}/auto_restore.flag"
+
+        inform_wait "Auto-restore set to: $BACKUP_FILENAME\n\nIt will be restored on the next boot."
+
+    fi
+
+    # Ensure data is written and unmount the partition
+    sync
     unmount_mt_partition
-
-    inform_wait "Auto-restore set to: $BACKUP_FILENAME\n\nIt will be restored on the next boot."
 
     return 0
 
