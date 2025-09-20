@@ -252,12 +252,17 @@ function set_command_rate() {
 # - mmc0, mmc1 or mmc2
 function set_led_state() {
 
-    echo $1 > "$WORK_LED/trigger"
+    # This code tries to change the behavior of the TV Box LED. 
+    # Before doing that, it first checks if the LED is controllable. 
+    # If it is, it changes the LED state; if not, it simply does nothing, 
+    # which is why the conditional was added, avoiding the script showing an error message.
+    #
+    # @author: Pedro Rigolin
+    if [ -w "$WORK_LED/trigger" ]; then
+        
+        echo $1 > "$WORK_LED/trigger"
 
-    # if [ -w "$WORK_LED/trigger" ]; then
-    #     # Se existir, aí sim, executa o comando
-    #     echo $1 > "$WORK_LED/trigger"
-    # fi
+    fi
 
 }
 
@@ -483,16 +488,16 @@ function do_restore() {
     # Search the backup path on the MULTITOOL partition
     if [ ! -d "${MOUNT_POINT}/backups" ]; then
         unmount_mt_partition
-                inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
+        inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
         return 3
-        fi
+    fi
 
     BACKUP_COUNT=$(find "${MOUNT_POINT}/backups" -iname '*.gz' | wc -l)
     if [ $BACKUP_COUNT -eq 0 ]; then
         unmount_mt_partition
         inform_wait "There are no backups on MULTITOOL partition, restore cannot continue"
         return 3
-        fi
+    fi
 
     RESTORE_SOURCE=$(choose_file "Restore a backup image to $BLK_DEVICE" "Choose a backup image" "${MOUNT_POINT}/backups/*.gz")
 
@@ -503,7 +508,7 @@ function do_restore() {
 
     BASENAME=$(basename $RESTORE_SOURCE)
     DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size 2>/dev/null)
-        DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
+    DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
     
     set_led_state "$DEVICE_NAME"
 
@@ -574,6 +579,79 @@ function set_auto_restore() {
     return 0
 
 }
+
+function do_auto_restore() {
+
+    # Mount the multitool partition
+    mount_mt_partition
+
+    if [ $? -ne 0 ]; then
+        inform_wait "There has been an error mounting the MULTITOOL partition, auto-restore cannot continue"
+        unmount_mt_partition
+        return 1
+    fi
+
+    if [ ! -f "${MOUNT_POINT}/auto_restore.flag" ]; then
+        unmount_mt_partition
+        return 0 # No auto-restore file, nothing to do
+    fi
+
+    BACKUP_FILENAME=$(cat "${MOUNT_POINT}/auto_restore.flag" | xargs)
+
+    if [ -z "$BACKUP_FILENAME" ]; then
+        unmount_mt_partition
+        return 0 # No auto-restore file, nothing to do
+    fi
+
+    if [ ! -f "${MOUNT_POINT}/backups/${BACKUP_FILENAME}" ]; then
+        inform_wait "The auto-restore file (${BACKUP_FILENAME}) does not exist, auto-restore cannot continue"
+        unmount_mt_partition
+        return 1
+    fi
+
+    BASENAME=$(basename $BACKUP_FILENAME)
+    RESTORE_SOURCE="${MOUNT_POINT}/backups/${BACKUP_FILENAME}"
+
+    # Verify there is at least one suitable device
+    if [ ${#DEVICES_MMC[@]} -eq 0 ]; then
+        inform_wait "There are no eMMC devices suitable for auto-restore"
+        unmount_mt_partition
+        return 3 # Not available
+    fi
+
+    # Ask the user which device she wants to restore
+    RESTORE_DEVICE=${DEVICES_MMC[0]}
+
+    DEVICE_BASENAME=$(basename $RESTORE_DEVICE)
+    BLK_DEVICE=$(get_block_device $RESTORE_DEVICE)
+    DEVICE_NAME=$(echo $DEVICE_BASENAME | cut -d ":" -f 1)
+
+    DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size 2>/dev/null)
+    DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
+    
+    set_led_state "$DEVICE_NAME"
+
+    (dd if="$RESTORE_SOURCE" bs=256K | pigz -d | pv -n -s ${DEVICE_SIZE}K | dd of="/dev/$BLK_DEVICE" bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
+        --backtitle "$BACKTITLE" \
+        --gauge "Restore of backup $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
+
+    ERR=$?
+
+    sync
+
+    unmount_mt_partition
+
+    dialog --backtitle "$BACKTITLE" \
+        --timeout 10 \
+        --ok-label "Shutdown now" \
+        --title "Auto-restore completed!" \
+        --msgbox "Backup restored to device $BLK_DEVICE\n\nIn 10 seconds the system will shutdown automatically" 10 70
+
+    do_shutdown
+
+    return 0    
+
+}   
 
 # Test the compression format for an archive
 function get_compression_format() {
