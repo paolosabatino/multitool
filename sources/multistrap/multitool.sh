@@ -619,6 +619,9 @@ function do_auto_restore() {
         return 3 # Not available
     fi
 
+    # ?? Pode ser pensado em colocar um menu de escolha do dispositivo
+    # ?? mas mantendo um valor default (o primeiro da lista)
+
     # Ask the user which device she wants to restore
     RESTORE_DEVICE=${DEVICES_MMC[0]}
 
