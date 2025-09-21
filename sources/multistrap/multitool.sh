@@ -69,7 +69,18 @@ declare -a DEVICES_MMC
 declare -a DEVICES_SD
 declare -a DEVICES_SDIO
 
-# Finds all the devices attached to MMC bus (ie: MMC, SD and SDIO devices)
+# Finds all devices attached to the MMC bus
+#
+# This function scans the /sys/bus/mmc/devices directory and categorizes
+# all detected MMC devices into three global arrays based on their type:
+# - DEVICES_MMC: MMC devices (eMMC)
+# - DEVICES_SD: SD card devices
+# - DEVICES_SDIO: SDIO devices
+#
+# These arrays are used throughout the application for device selection
+# in backup and restore operations.
+#
+# @author Paolo Sabatino
 function find_mmc_devices() {
 
     SYS_MMC_PATH="/sys/bus/mmc/devices"
@@ -91,7 +102,17 @@ function find_mmc_devices() {
 
 }
 
-# Find devices which have specific paths, like proprietary NAND drivers
+# Finds devices with special/proprietary paths
+#
+# This function searches for storage devices that use proprietary drivers
+# and have specific device paths that are not detected through the standard
+# MMC bus enumeration. Currently supports Rockchip NAND devices (/dev/rknand0).
+#
+# When a special device is found, it displays a warning about limitations
+# of proprietary drivers and adds the device to the DEVICES_MMC array
+# for use in backup/restore operations.
+#
+# @author Paolo Sabatino
 function find_special_devices() {
 
     SYS_RKNAND_BLK_DEV="/dev/rknand0"
@@ -107,8 +128,15 @@ function find_special_devices() {
 
 }
 
-# Given a device path (/sys/bus/mmc/devices/*), return the block device name (mmcblk*)
-# The device path is passed as first argument
+# Gets the block device name from a sysfs device path
+#
+# This function takes a device path from /sys/bus/mmc/devices/* and returns
+# the corresponding block device name (e.g., mmcblk0, mmcblk1) that can be
+# used for block device operations.
+#
+# @param string $1 The sysfs device path (e.g., /sys/bus/mmc/devices/mmc0:0001)
+# @return string The block device name (e.g., mmcblk0)
+# @author Paolo Sabatino
 function get_block_device() {
 
     DEVICE=$1
@@ -118,7 +146,15 @@ function get_block_device() {
 
 }
 
-# Mounts MULTITOOL partition on /mnt to allow operations on it
+# Mounts the MULTITOOL partition for file operations
+#
+# This function mounts the partition labeled "MULTITOOL" (FAT/NTFS/EXT) to /mnt,
+# allowing access to backup files and configuration data. It first attempts a
+# remount (for already mounted partitions) and falls back to a regular mount
+# if the remount fails.
+#
+# @return 0 on successful mount, 1 on mount failure
+# @author Paolo Sabatino
 function mount_mt_partition() {
 
     # Try to do a remount: if partition is already mounted
@@ -134,17 +170,34 @@ function mount_mt_partition() {
 
 }
 
-# Unmounts MULTITOOL partition
+# Unmounts the MULTITOOL partition safely
+#
+# This function safely unmounts the MULTITOOL partition from /mnt after ensuring
+# all pending data is written to disk. It suppresses error output and is designed
+# to be called after operations that required access to the multitool partition.
+#
+# @return 0 always (errors are suppressed)
+# @author Paolo Sabatino
 function unmount_mt_partition() {
 
+    # Ensure all data is written
+    sync
     umount "$MOUNT_POINT" 2>/dev/null
 
     return 0
 
 }
 
+# Reboots the system safely
+#
+# This function ensures all data is written to disk, unmounts the multitool partition,
+# and triggers a system reboot using the sysrq mechanism.
+#
+# @author Paolo Sabatino
 function do_reboot() {
 
+    # Ensure all data is written
+    sync
     unmount_mt_partition
 
     sleep 1
@@ -153,8 +206,16 @@ function do_reboot() {
 
 }
 
+# Shuts down the system safely
+#
+# This function ensures all data is written to disk, unmounts the multitool partition,
+# and triggers a system shutdown using the sysrq mechanism.
+#
+# @author Paolo Sabatino
 function do_shutdown() {
 
+    # Ensure all data is written
+    sync
     unmount_mt_partition
 
     sleep 1
@@ -163,8 +224,30 @@ function do_shutdown() {
 
 }
 
-# Creates the directory "backups" on the MULTITOOL mount point if it does not already exists.
-# Requires the MULTITOOL partition to be already mounted
+# Provides an interactive shell for advanced operations
+#
+# This function drops the user into an interactive bash shell, allowing them
+# to execute arbitrary commands for debugging, troubleshooting, or advanced
+# operations. The user can exit the shell to return to the multitool menu.
+#
+# @author Paolo Sabatino
+function do_give_shell() {
+
+    echo -e "Drop to a bash shell. Exit the shell to return to Multitool\n"
+
+    /bin/bash -il
+
+}
+
+# Creates the backups directory on the MULTITOOL partition
+#
+# This function ensures the "backups" directory exists on the mounted MULTITOOL
+# partition at /mnt/backups. It creates the directory if it doesn't exist and
+# verifies the operation was successful.
+#
+# @requires MULTITOOL partition must be already mounted
+# @return 0 on success, 1 on failure
+# @author Paolo Sabatino
 function prepare_backup_directory() {
 
     mkdir -p "$MOUNT_POINT/backups"
@@ -177,9 +260,16 @@ function prepare_backup_directory() {
 
 }
 
-# Get the command rate offset, looking into the specified image file/device.
-# Exit code is 0 and value is given is stdout if successful
-# Exit code is 1 in case of failure
+# Gets the command rate offset from an image file or device
+#
+# This function searches for a specific signature (a7866565) in the first 128KB
+# of the target image file or device. If found, it calculates the command rate
+# offset as 16 bytes before the signature location. This offset is used for
+# DDR memory timing configuration.
+#
+# @param string $1 The target image file or device path
+# @return 0 on success (offset printed to stdout), 1 on failure
+# @author Paolo Sabatino
 function get_command_rate_offset() {
 
     TARGET="$1" # target device/file
@@ -202,10 +292,16 @@ function get_command_rate_offset() {
 
 }
 
-# Try to get the command rate bit from an existing image. 
-# First argument is the target image device/file 
-# Exit code is 0 if Command rate is found, 1 if it could not be found.
-# Command Rate is returned as 1T or 2T string
+# Gets the command rate value from an image file or device
+#
+# This function reads the command rate byte from the calculated offset in the
+# target image file or device. It interprets the byte value (0 = 1T, 1 = 2T)
+# and returns the command rate as a string. This is used for DDR memory timing
+# configuration where command rate determines clock cycle timing.
+#
+# @param string $1 The target image file or device path
+# @return 0 on success ("1T" or "2T" printed to stdout), 1 on failure
+# @author Paolo Sabatino
 function get_command_rate() {
 
     TARGET="$1"
@@ -233,12 +329,17 @@ function get_command_rate() {
     
 }
 
-# Given a target file/device, write the command rate bit to the proper place.
-# The function searches for the signature and write the command rate bit only
-# after verifying the signature and existing value match, otherwise fails
-# First argument is device/file to act over
-# Second argument is command rate value (1T or 2T as string)
-# Exit code is 0 if successful, 1 if it fails
+# Sets the command rate value in an image file or device
+#
+# This function writes the specified command rate value (1T or 2T) to the
+# calculated offset in the target image file or device. It first verifies
+# that the existing command rate can be read successfully before making
+# changes. This is used for DDR memory timing configuration.
+#
+# @param string $1 The target image file or device path
+# @param string $2 The command rate value ("1T" or "2T")
+# @return 0 on success, 1 on failure
+# @author Paolo Sabatino
 function set_command_rate() {
 
     TARGET="$1"
@@ -266,10 +367,15 @@ function set_command_rate() {
 }
 
 
-# Change the WORK_LED state to whatever is passed as argument
-# Argument can typically be:
-# - timer
-# - mmc0, mmc1 or mmc2
+# Sets the LED state for visual feedback during operations
+#
+# This function changes the TV Box LED behavior to provide visual feedback
+# during various operations. It safely checks if the LED is controllable
+# before attempting to change its state, avoiding error messages if the
+# LED cannot be controlled.
+#
+# @param string $1 The LED state (e.g., "timer", "mmc0", "mmc1", "mmc2")
+# @author Paolo Sabatino
 function set_led_state() {
 
     # This code tries to change the behavior of the TV Box LED. 
@@ -286,6 +392,19 @@ function set_led_state() {
 
 }
 
+# Displays a menu for selecting an MMC device
+#
+# This function presents an interactive dialog menu allowing the user to
+# select from available MMC devices. It builds a user-friendly menu showing
+# device information including block device names, device names (if available),
+# and device paths. The selected device path is returned for use in operations
+# like backup, restore, or image burning.
+#
+# @param string $1 The dialog title
+# @param string $2 The menu title
+# @param array $3 Array of device paths to choose from
+# @return 0 on success (selected device path printed to stdout), 1 on user cancel
+# @author Paolo Sabatino
 function choose_mmc_device() {
 
     TITLE=$1
@@ -321,8 +440,19 @@ function choose_mmc_device() {
 
 }
 
-# Shows a menu of files given title as first argument, the menu title as second argument
-# and the full path with glob as third argument
+# Displays a menu for selecting a file from a glob pattern
+#
+# This function presents an interactive dialog menu allowing the user to
+# select from files matching a given glob pattern. It expands the glob to
+# find available files, builds a menu showing just the filenames (not full paths),
+# and returns the selected file's full path for use in operations like restore
+# or image burning.
+#
+# @param string $1 The dialog title
+# @param string $2 The menu title
+# @param string $3 File glob pattern (e.g., "${MOUNT_POINT}/backups/*.gz")
+# @return 0 on success (selected file path printed to stdout), 1 on user cancel
+# @author Paolo Sabatino
 function choose_file() {
 
     declare -a FILES
@@ -356,8 +486,15 @@ function choose_file() {
     
 }
 
-# Function to inform the user, but does not wait for its ok (returns immediately)
-# First argument is the text
+# Displays an informational message without waiting for user confirmation
+#
+# This function shows a dialog infobox with the provided text message.
+# The dialog appears and the function returns immediately without requiring
+# user interaction, making it suitable for status updates or progress information
+# that doesn't need acknowledgment.
+#
+# @param string $1 The text message to display
+# @author Paolo Sabatino
 function inform() {
     
     TEXT=$1
@@ -368,9 +505,15 @@ function inform() {
 
 }
 
-
-# Function to inform the user and wait for its ok.
-# First argument is the text
+# Displays an informational message and waits for user confirmation
+#
+# This function shows a dialog message box with the provided text message
+# and waits for the user to press OK before continuing execution. It is used
+# for important notifications, warnings, or confirmations that require user
+# acknowledgment before proceeding.
+#
+# @param string $1 The text message to display
+# @author Paolo Sabatino
 function inform_wait() {
 
     TEXT=$1
@@ -381,12 +524,20 @@ function inform_wait() {
 
 }
 
-# Do backup procedure.
-# Return codes:
-# - 0 Ok
-# - 1 Error
-# - 2 User cancelled
-# - 3 No suitable devices
+# Performs a complete backup of an MMC device to a compressed file
+#
+# This function guides the user through the entire backup process:
+# - Selects the source MMC device to backup
+# - Prompts for a backup filename
+# - Creates the backup directory on the multitool partition
+# - Handles file overwrite confirmation
+# - Performs the backup using compression and progress monitoring
+# - Provides user feedback throughout the process
+#
+# The backup is stored as a compressed .gz file on the multitool partition.
+#
+# @return 0 on success, 1 on error, 2 on user cancel, 3 if no suitable devices
+# @author Paolo Sabatino
 function do_backup() {
 
     # Verify there is at least one suitable device
@@ -472,7 +623,19 @@ function do_backup() {
 
 }
 
-# Restores a backup
+# Performs a complete restore of a backup image to an MMC device
+#
+# This function guides the user through the entire restore process:
+# - Selects the destination MMC device for restore
+# - Verifies backup files are available on the multitool partition
+# - Allows user to choose which backup file to restore
+# - Performs the restore using decompression and progress monitoring
+# - Provides user feedback throughout the process
+#
+# The restore uses compressed .gz backup files from the multitool partition.
+#
+# @return 0 on success, 1 on error, 2 on user cancel, 3 if no backups available
+# @author Paolo Sabatino
 function do_restore() {
 
     # Verify there is at least one suitable device
@@ -916,11 +1079,19 @@ function do_auto_restore() {
 
     return 0    
 
-}   
+}
 
-# Test the compression format for an archive
+# Detects the compression format of an archive file
+#
+# This function tests a file against various compression formats (gzip, xz, bzip2, lzma)
+# to determine which compression algorithm was used. It returns the format name as a string
+# if successfully detected, or returns an error if the format is unknown or unsupported.
+#
+# @param string $1 The path to the archive file to test
+# @return 0 on success (format name printed to stdout), 1 on failure/unknown format
+# @author Paolo Sabatino
 function get_compression_format() {
-
+    
     TARGET=$1
 
     pigz -l "$TARGET" >/dev/null 2>&1
@@ -955,11 +1126,23 @@ function get_compression_format() {
 
 }
 
-# Given a file as first argument, returns the decompressor command line
-# also exit code is 0 if the decompressor supports input file from stdin
-# otherwise returns 1
-# Also populates D_FORMAT, D_COMMAND_LINE, D_REAL_FILE and D_ERROR_TEXT
-# global variables to be used by the caller
+# Generates the decompression command line for various archive formats
+#
+# This function analyzes an archive file and determines the appropriate
+# decompression/extraction command line based on the archive type. It supports
+# multiple formats including 7z, zip, tar (with various compressions), and
+# single compressed files (gzip, xz, bzip2, lzma). For archives containing
+# multiple files, it looks for .img files to extract.
+#
+# The function populates global variables:
+# - D_COMMAND_LINE: The full command line for decompression
+# - D_FORMAT: Description of the archive format
+# - D_REAL_FILE: The actual filename being extracted (for archives)
+# - D_ERROR_TEXT: Error message if extraction fails
+#
+# @param string $1 The path to the archive file
+# @return 0 on success, 1 on failure (unsupported format or no .img file)
+# @author Paolo Sabatino
 function get_decompression_cli() {
 
     local TARGET=$1
@@ -1083,6 +1266,16 @@ function get_decompression_cli() {
 }
 
 # Restore an image and burns it onto an eMMC device
+# This function handles the complete process of burning an image file to an MMC/eMMC device.
+# It supports various archive formats (7z, zip, tar with compression, single compressed files)
+# and automatically detects the format to use appropriate decompression tools.
+# For special Rockchip NAND devices, it performs additional bootloader burning steps.
+# The function provides progress monitoring during the burning process and handles
+# DDR command rate preservation for compatible devices.
+#
+# @param None
+# @return 0 on success, 1 on failure (error during burning or device operations)
+# @author Paolo Sabatino
 function do_burn() {
 
     # Verify there is at least one suitable device
@@ -1122,16 +1315,17 @@ function do_burn() {
     # Search the images path on the MULTITOOL partition
     if [ ! -d "${MOUNT_POINT}/images" ]; then
         unmount_mt_partition
-                inform_wait "There are no images on MULTITOOL partition."
+        inform_wait "There are no images on MULTITOOL partition."
         return 3
-        fi
+    fi
 
     IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -type f -iname '*' 2>/dev/null | wc -l)
+    
     if [ $IMAGES_COUNT -eq 0 ]; then
         unmount_mt_partition
         inform_wait "There are no images on MULTITOOL partition."
         return 3
-        fi
+    fi
 
     IMAGE_SOURCE=$(choose_file "Burn an image to $BLK_DEVICE" "Choose the source image file" "${MOUNT_POINT}/images/*")
 
@@ -1240,9 +1434,9 @@ function do_burn() {
             ERR=$?
 
         if [ $ERR -ne 0 ]; then
-                unmount_mt_partition
-                inform_wait "An error occurred ($ERR) while burning bootloader on device, image may not boot"
-                return 1
+            unmount_mt_partition
+            inform_wait "An error occurred ($ERR) while burning bootloader on device, image may not boot"
+            return 1
         fi
                 
     fi
@@ -1255,7 +1449,15 @@ function do_burn() {
 
 }
 
-# Restore an image and burns it onto an eMMC device
+# Install Armbian image via steP-nand method for NAND devices
+# This function handles the installation of Armbian images to NAND-based devices using
+# the steP-nand approach. It performs special sector offset handling for NAND devices,
+# creates GPT partition tables, and installs legacy bootloader and TEE components.
+# The function supports various archive formats and provides progress monitoring.
+#
+# @param None
+# @return 0 on success, 1 on error, 2 on user cancellation, 3 if no images available
+# @author Paolo Sabatino
 function do_install_stepnand() {
 
     inform_wait "$STEPNAND_WARNING"
@@ -1287,16 +1489,17 @@ function do_install_stepnand() {
     # Search the images path on the MULTITOOL partition
     if [ ! -d "${MOUNT_POINT}/images" ]; then
         unmount_mt_partition
-                inform_wait "There are no images on MULTITOOL partition."
+        inform_wait "There are no images on MULTITOOL partition."
         return 3
-        fi
+    fi
 
     IMAGES_COUNT=$(find "${MOUNT_POINT}/images" -type f -iname '*' 2>/dev/null | wc -l)
+    
     if [ $IMAGES_COUNT -eq 0 ]; then
         unmount_mt_partition
         inform_wait "There are no images on MULTITOOL partition."
         return 3
-        fi
+    fi
 
     IMAGE_SOURCE=$(choose_file "Burn Armbian image via steP-nand to $BLK_DEVICE" "Choose the source image file" "${MOUNT_POINT}/images/*")
 
@@ -1346,6 +1549,7 @@ function do_install_stepnand() {
     inform "Installing legacy bootloader and creating GPT partitions, this will take a moment ..."
 
     dd if="${MOUNT_POINT}/bsp/legacy-uboot.img" of="/dev/$BLK_DEVICE" bs=4M seek=1 oflag=direct >/dev/null 2>&1
+   
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
@@ -1355,6 +1559,7 @@ function do_install_stepnand() {
     fi
 
     dd if="${MOUNT_POINT}/bsp/trustos.img" of="/dev/$BLK_DEVICE" bs=4M seek=2 oflag=direct >/dev/null 2>&1
+    
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
@@ -1373,6 +1578,7 @@ function do_install_stepnand() {
     dd if=/dev/zero of="/dev/$BLK_DEVICE" bs=32k count=1 conv=sync,fsync >/dev/null 2>&1
     sgdisk -o "/dev/$BLK_DEVICE" >/dev/null 2>&1
     sgdisk --zap-all -n 0:32768:+4G "/dev/$BLK_DEVICE" >/dev/null 2>&1
+
     ERR=$?
 
     if [ $ERR -ne 0 ]; then
@@ -1389,26 +1595,35 @@ function do_install_stepnand() {
 
 }
 
+# Erase an MMC device completely
+# This function securely erases MMC/eMMC devices using the most efficient method available.
+# It first attempts to use blkdiscard (MMC erase command) for fast, secure erasure,
+# then falls back to overwriting with zeros using dd and pv for progress monitoring.
+# The function provides visual feedback and handles device selection through dialog menus.
+#
+# @param None
+# @return 0 on success, 2 on user cancellation, 3 if no suitable devices available
+# @author Paolo Sabatino
 function do_erase_mmc() {
 
     # Verify there is at least one suitable device
-        if [ ${#DEVICES_MMC[@]} -eq 0 ]; then
-                inform_wait "There are not eMMC device suitable"
-                return 3 # Not available
-        fi
+    if [ ${#DEVICES_MMC[@]} -eq 0 ]; then
+        inform_wait "There are not eMMC device suitable"
+        return 3 # Not available
+    fi
 
     # Ask the user which device she wants to erase
-        ERASE_DEVICE=$(choose_mmc_device "Erase flash" "Select device to erase:" $DEVICES_MMC)
+    ERASE_DEVICE=$(choose_mmc_device "Erase flash" "Select device to erase:" $DEVICES_MMC)
 
-        if [ $? -ne 0 ]; then
-                return 2 # User cancelled
-        fi
+    if [ $? -ne 0 ]; then
+        return 2 # User cancelled
+    fi
 
-        if [ -z "$ERASE_DEVICE" ]; then
-                return 2 # No backup device, user cancelled?
-        fi
+    if [ -z "$ERASE_DEVICE" ]; then
+        return 2 # No backup device, user cancelled?
+    fi
 
-        BASENAME=$(basename $ERASE_DEVICE)
+    BASENAME=$(basename $ERASE_DEVICE)
     BLK_DEVICE=$(get_block_device $ERASE_DEVICE)
     DEVICENAME=$(echo $BASENAME | cut -d ":" -f 1)
 
@@ -1441,7 +1656,15 @@ function do_erase_mmc() {
 
 }
 
-# Install jump start for armbian on NAND
+# Install jump start for Armbian on NAND devices
+# This function performs a jump start installation for Armbian on NAND-based devices.
+# It transfers the bootloader and TEE (Trusted Execution Environment) from the boot device
+# to specific NAND sectors, enabling the device to boot Armbian. The function requires
+# user confirmation and provides feedback during the transfer process.
+#
+# @param None
+# @return 0 on success, 1 on transfer error, 2 on user cancellation
+# @author Paolo Sabatino
 function do_install_jump_start() {
 
     dialog --backtitle "$BACKTITLE" --yesno "$JUMPSTART_WARNING" 0 0
@@ -1453,12 +1676,14 @@ function do_install_jump_start() {
     inform "Transferring boot loader, please wait..."
 
     dd if="$BOOT_DEVICE" of=/dev/rknand0 skip=$((0x4000)) seek=$((0x2000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+    
     if [ $? -ne 0 ]; then
         inform_wait "Could not transfer U-boot on NAND device"
         return 1
     fi
 
     dd if="$BOOT_DEVICE" of=/dev/rknand0 skip=$((0x8000)) seek=$((0x6000)) count=$((0x4000)) conv=sync,fsync >/dev/null 2>&1
+    
     if [ $? -ne 0 ]; then
         inform_wait "Could not transfer TEE on NAND device"
         return 1
@@ -1474,6 +1699,15 @@ function do_install_jump_start() {
 
 }
 
+# Change DDR Command Rate timing value on MMC devices
+# This function allows users to modify the DDR command rate timing on compatible MMC devices.
+# It reads the current timing value, presents a menu to select between 1T and 2T timing,
+# and applies the change. This is useful for optimizing device performance or compatibility.
+# The function handles device selection and provides user feedback throughout the process.
+#
+# @param None
+# @return 0 on success, 1 on error (can't read/write timing), 2 on user cancellation
+# @author Paolo Sabatino
 function do_change_command_rate() {
 
     inform_wait "$COMMAND_RATE_WARNING"
@@ -1527,15 +1761,6 @@ function do_change_command_rate() {
     inform_wait "Command Rate timing value has been changed"
     
     return 0
-
-}
-
-# Give a shell to the user
-function do_give_shell() {
-
-    echo -e "Drop to a bash shell. Exit the shell to return to Multitool\n"
-
-    /bin/bash -il
 
 }
 
@@ -1599,7 +1824,9 @@ if [ -f "$FLAG_FILE" ]; then
 
                 dialog --backtitle "$BACKTITLE" \
                     --exit-label "Proceed" \
-                    --msgbox "Tem arquivo de auto restore!" 0 0 
+                    --msgbox "Tem arquivo de auto restore!" 0 0
+
+                # do_auto_restore
 
             fi
 
