@@ -143,6 +143,26 @@ function unmount_mt_partition() {
 
 }
 
+function do_reboot() {
+
+    unmount_mt_partition
+
+    sleep 1
+
+    echo b > /proc/sysrq-trigger
+
+}
+
+function do_shutdown() {
+
+    unmount_mt_partition
+
+    sleep 1
+
+    echo o > /proc/sysrq-trigger
+
+}
+
 # Creates the directory "backups" on the MULTITOOL mount point if it does not already exists.
 # Requires the MULTITOOL partition to be already mounted
 function prepare_backup_directory() {
@@ -532,9 +552,88 @@ function do_restore() {
 
 }
 
-# Set an automatic restore at next boot
+# Display the current auto-restore configuration
+#
+# This function mounts the multitool partition, reads the auto_restore.flag file,
+# and displays a dialog box showing whether auto-restore is currently configured
+# and which backup file is set for automatic restoration (if any).
 #
 # @author Pedro Rigolin
+# @return 0 on success, 1 on mount error
+function show_current_auto_restore() {
+
+    # Mount the multitool partition
+    mount_mt_partition
+
+    if [ $? -ne 0 ]; then
+
+        inform_wait "\nThere has been an error mounting the MULTITOOL partition, process cannot continue"
+        
+        # Ensure data is written and unmount the partition
+        sync
+        unmount_mt_partition
+
+        return 1
+
+    fi
+
+    local FLAG_FILE="${MOUNT_POINT}/auto_restore.flag"
+
+    # Create the flag file if it doesn't exist
+    if [ ! -f "$FLAG_FILE" ]; then
+
+        echo -n "" > "$FLAG_FILE"
+
+    fi
+
+    if [ [ "$FLAG_CONTENTS" != *.gz ] ]; then
+
+        inform_wait "\nThe auto-restore flag file does not contain a valid .gz filename, resetting it to empty."
+
+        echo -n "" > "$FLAG_FILE"
+
+    fi
+
+    # Read the contents of the flag file
+    local FLAG_CONTENTS=$(cat "$FLAG_FILE" | xargs)
+
+    # Display appropriate dialog based on flag contents
+    if [ -z "$FLAG_CONTENTS" ]; then
+
+        dialog --backtitle "$BACKTITLE" \
+            --title "Current Auto-Restore" \
+            --ok-label "OK" \
+            --msgbox "\n\nNo Auto-Restore file is defined." 10 60
+
+    else
+
+        dialog --backtitle "$BACKTITLE" \
+            --title "Current Auto-Restore" \
+            --ok-label "OK" \
+            --msgbox "\nAuto-Restore file is set to:\n\n${FLAG_CONTENTS}" 10 60
+
+    fi
+
+    # Ensure data is written and unmount the partition
+    sync
+    unmount_mt_partition
+
+    return 0
+
+}
+
+# Set an automatic restore at next boot
+#
+# This function provides an interactive menu to configure automatic restore settings.
+# It mounts the multitool partition, scans for available .gz backup files, and presents
+# a dialog menu allowing the user to select a backup for automatic restoration on next boot
+# or to unset the auto-restore configuration.
+#
+# The selected backup filename is stored in the auto_restore.flag file on the multitool partition.
+# If "Unset" is chosen, the flag file is emptied, disabling auto-restore.
+#
+# @author Pedro Rigolin
+# @return 0 on success, 1 on mount error or no backups found, 2 on user cancel
 function set_auto_restore() {
 
     # Mount the multitool partition
@@ -544,6 +643,8 @@ function set_auto_restore() {
 
         inform_wait "There has been an error mounting the MULTITOOL partition, process cannot continue"
         
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
 
         return 1
@@ -582,6 +683,7 @@ function set_auto_restore() {
 
         if [ -f "$FILE" ]; then
 
+            # Add file to the arrays for menu display
             FILES+=($FILE)
 
             local BASENAME=$(basename "$FILE")
@@ -598,6 +700,8 @@ function set_auto_restore() {
 
         inform_wait "No backup images found in the multitool partition and no auto-restore file is defined.\n\nPlease add .gz files to enable auto-restore."
         
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
 
         return 1
@@ -611,11 +715,14 @@ function set_auto_restore() {
 
     local MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU_TITLE" 24 0 18)
 
+    # Display the menu and capture user choice
     CHOICE=$("${MENU_CMD[@]}" "${STR_FILES[@]}" 2>&1 >$TTY_CONSOLE)
 
     # If the user pressed Cancel or ESC, just exit the function
     if [ $? -ne 0 ]; then
 
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
 
         return 2
@@ -625,7 +732,7 @@ function set_auto_restore() {
     # Decision logic based on user choice
     if [ "$CHOICE" = "UNSET" ]; then
 
-        # If chose "UNSET", create an empty flag file
+        # Clear the auto-restore configuration
         echo -n "" > "${MOUNT_POINT}/auto_restore.flag"
 
         inform_wait "Auto-restore has been UNSET.\n\nThe flag file is now empty."
@@ -637,6 +744,7 @@ function set_auto_restore() {
 
         local BACKUP_FILENAME=$(basename "$RESTORE_SOURCE")
 
+        # Write the selected backup filename to the flag file
         echo -n "$BACKUP_FILENAME" > "${MOUNT_POINT}/auto_restore.flag"
 
         inform_wait "Auto-restore set to: $BACKUP_FILENAME\n\nIt will be restored on the next boot."
@@ -651,77 +759,160 @@ function set_auto_restore() {
 
 }
 
+# Performs automatic restore of a backup image to the device based on the auto_restore.flag file.
+#
+# This function mounts the multitool partition, reads the backup filename from the flag file,
+# verifies the backup exists, selects a suitable eMMC device, and restores the compressed
+# backup image to the device using dd, pigz, and pv for progress monitoring.
+#
+# @author Pedro Rigolin
+# @return 0 on success, 1 on error, 3 if no suitable device
 function do_auto_restore() {
 
     # Mount the multitool partition
     mount_mt_partition
 
     if [ $? -ne 0 ]; then
+
         inform_wait "There has been an error mounting the MULTITOOL partition, auto-restore cannot continue"
+        
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
+
         return 1
+
     fi
 
     if [ ! -f "${MOUNT_POINT}/auto_restore.flag" ]; then
+        
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
-        return 0 # No auto-restore file, nothing to do
+        
+        # No auto-restore file, nothing to do
+        return 0
+    
     fi
 
     BACKUP_FILENAME=$(cat "${MOUNT_POINT}/auto_restore.flag" | xargs)
 
     if [ -z "$BACKUP_FILENAME" ]; then
+
+        inform_wait "No auto-restore file is defined, auto-restore cannot continue"
+        
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
-        return 0 # No auto-restore file, nothing to do
+        
+        # No auto-restore file, nothing to do
+        return 0
+
+    fi
+
+    if [ [ "$FLAG_CONTENTS" != *.gz ] ]; then
+
+        inform_wait "The auto-restore flag file does not contain a valid .gz filename, resetting it to empty."
+        
+        echo -n "" > "${MOUNT_POINT}/auto_restore.flag"
+
+        # Ensure data is written and unmount the partition
+        sync
+        unmount_mt_partition
+
+        return 1
+
     fi
 
     if [ ! -f "${MOUNT_POINT}/backups/${BACKUP_FILENAME}" ]; then
+
         inform_wait "The auto-restore file (${BACKUP_FILENAME}) does not exist, auto-restore cannot continue"
+        
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
+
         return 1
+
     fi
 
     BASENAME=$(basename $BACKUP_FILENAME)
+
     RESTORE_SOURCE="${MOUNT_POINT}/backups/${BACKUP_FILENAME}"
 
     # Verify there is at least one suitable device
     if [ ${#DEVICES_MMC[@]} -eq 0 ]; then
+
         inform_wait "There are no eMMC devices suitable for auto-restore"
+
+        # Ensure data is written and unmount the partition
+        sync
         unmount_mt_partition
-        return 3 # Not available
+
+        # Not available
+        return 3
+
     fi
 
-    # ?? Pode ser pensado em colocar um menu de escolha do dispositivo
-    # ?? mas mantendo um valor default (o primeiro da lista)
+    # TODO: Consider adding a device selection menu
+    # but keep the first device as default
 
-    # Ask the user which device she wants to restore
+    # Select the first available device for restore
     RESTORE_DEVICE=${DEVICES_MMC[0]}
 
+    # Extract device information
     DEVICE_BASENAME=$(basename $RESTORE_DEVICE)
+
     BLK_DEVICE=$(get_block_device $RESTORE_DEVICE)
+
     DEVICE_NAME=$(echo $DEVICE_BASENAME | cut -d ":" -f 1)
 
+    # Get device size in sectors and convert to kilobytes
     DEVICE_SIZE=$(cat /sys/block/$BLK_DEVICE/size 2>/dev/null)
+
     DEVICE_SIZE=$((DEVICE_SIZE / 2)) # convert sectors to kilobytes
     
+    # Set LED state to indicate activity
     set_led_state "$DEVICE_NAME"
 
+    # Perform the restore operation with progress monitoring
+    # Pipeline: read compressed backup -> decompress -> show progress -> write to device
     (dd if="$RESTORE_SOURCE" bs=256K | pigz -d | pv -n -s ${DEVICE_SIZE}K | dd of="/dev/$BLK_DEVICE" bs=512K iflag=fullblock oflag=direct 2>/dev/null) 2>&1 | dialog \
         --backtitle "$BACKTITLE" \
         --gauge "Restore of backup $BASENAME to device $BLK_DEVICE in progress, please wait..." 10 70 0
 
+    # Capture the exit code from the restore operation
     ERR=$?
 
+    # Ensure data is written and unmount the partition
     sync
-
     unmount_mt_partition
 
+    # Check if the restore operation was successful
+    if [ $ERR -ne 0 ]; then
+
+        inform_wait "An error occurred ($ERR) restoring backup, process has not been completed"
+
+        return 1
+
+    fi
+
+    # Show completion dialog with shutdown options
     dialog --backtitle "$BACKTITLE" \
         --timeout 10 \
-        --ok-label "Shutdown now" \
+        --yes-label "Shutdown now" \
+        --no-label "Shutdown later" \
         --title "Auto-restore completed!" \
-        --msgbox "Backup restored to device $BLK_DEVICE\n\nIn 10 seconds the system will shutdown automatically" 10 70
+        --yesno "\nBackup restored to device $BLK_DEVICE\n\nIn 10 seconds the system will shutdown automatically" 10 70
 
-    do_shutdown
+    # Capture the exit code to know the decision
+    EXIT_CODE=$?
+
+    # If the exit code is 1 (user pressed "Shutdown Later"), do nothing.
+    # If it is 0 (Shutdown Now) or 255 (Timeout/ESC), the system shuts down.
+    if [ "$EXIT_CODE" -ne 1 ]; then
+        do_shutdown
+    fi
 
     return 0    
 
@@ -896,8 +1087,12 @@ function do_burn() {
 
     # Verify there is at least one suitable device
     if [ ${#DEVICES_MMC[@]} -eq 0 ]; then
+
         inform_wait "There are no eMMC devices suitable for image burn"
-        return 3 # Not available
+
+        # Not available
+        return 3
+
     fi
 
     # Ask the user which device she wants to restore
@@ -1344,26 +1539,6 @@ function do_give_shell() {
 
 }
 
-function do_reboot() {
-
-    unmount_mt_partition
-
-    sleep 1
-
-    echo b > /proc/sysrq-trigger
-
-}
-
-function do_shutdown() {
-
-    unmount_mt_partition
-
-    sleep 1
-
-    echo o > /proc/sysrq-trigger
-
-}
-
 # ----- Entry point -----
 
 # Mount the multitool partition
@@ -1395,35 +1570,53 @@ if [ "$EXIT_CODE" -eq 1 ]; then
 
 fi
 
-# Armazenamos o nome do arquivo de restauração automática
+# Store the name of the auto-restore file
 FLAG_FILE="${MOUNT_POINT}/auto_restore.flag"
 
-# Verifica se existe a flag de auto restore
+# Check if the auto-restore flag exists
 if [ -f "$FLAG_FILE" ]; then
 
-    # Lê o conteúdo da flag e remove espaços em branco
+    # Read the flag contents and remove whitespace
     FLAG_CONTENTS=$(cat "$FLAG_FILE" | xargs)
 
-    # Verifica se o conteúdo não está vazio
+    # Check if the content is not empty
     if [ -n "$FLAG_CONTENTS" ]; then
 
-        # Verifica se o arquivo especificado na flag existe
-        RESTORE_FILE="${MOUNT_POINT}/backups/${FLAG_CONTENTS}"
+        if [ [ "$FLAG_CONTENTS" != *.gz ] ]; then
 
-        # Se o arquivo existe, inicia o processo de restauração
-        if [ -f "$RESTORE_FILE" ]; then
+            inform_wait "\nThe auto-restore file ($FLAG_CONTENTS) is not a valid backup file (must end with .gz).\n\nThe flag file will be cleared."
 
-            dialog --backtitle "$BACKTITLE" \
-                --exit-label "Proceed" \
-                --msgbox "Tem arquivo de auto restore!" 0 0 
+            # Clear the auto-restore configuration
+            echo -n "" > "$FLAG_FILE"
+
+        else
+
+            # Check if the file specified in the flag exists
+            RESTORE_FILE="${MOUNT_POINT}/backups/${FLAG_CONTENTS}"
+
+            # If the file exists, start the restoration process
+            if [ -f "$RESTORE_FILE" ]; then
+
+                dialog --backtitle "$BACKTITLE" \
+                    --exit-label "Proceed" \
+                    --msgbox "Tem arquivo de auto restore!" 0 0 
+
+            fi
 
         fi
 
     fi
 
+# If the flag file does not exist, create it
+else
+
+    # Create an empty flag file
+    echo -n "" > "$FLAG_FILE"
+
 fi
 
 # Unmount the multitool partition
+sync
 unmount_mt_partition
 
 find_mmc_devices
@@ -1434,16 +1627,28 @@ declare -a MENU_ITEMS
 #?? ESTÁ MOSTRANDO O MENU DE CRÉDITOS NA PRIMEIRA VEZ QUE CHAMA A FUNÇÃO SET AUTO RESTORE??
 
 MENU_ITEMS+=(1 "Backup flash")
+
 MENU_ITEMS+=(2 "Restore flash")
+
 MENU_ITEMS+=(3 "Erase flash")
+
 MENU_ITEMS+=(4 "Drop to Bash shell")
+
 MENU_ITEMS+=(5 "Burn image to flash")
+
 MENU_ITEMS+=(6 "Configure auto restore file image")
-[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(7 "Install Jump start on NAND")
-[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(8 "Install Armbian via steP-nand")
-[[ ! "${DEVICES_MMC[@]}" =~ "nandc" && "${TARGET_CONF}" = "rk322x" ]] && MENU_ITEMS+=(9 "Change DDR Command Rate")
-MENU_ITEMS+=(A "Reboot")
-MENU_ITEMS+=(B "Shutdown")
+
+MENU_ITEMS+=(7 "Show Current Auto-Restore")
+
+[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(8 "Install Jump start on NAND")
+
+[[ "${DEVICES_MMC[@]}" =~ "nandc" ]] && MENU_ITEMS+=(9 "Install Armbian via steP-nand")
+
+[[ ! "${DEVICES_MMC[@]}" =~ "nandc" && "${TARGET_CONF}" = "rk322x" ]] && MENU_ITEMS+=(A "Change DDR Command Rate")
+
+MENU_ITEMS+=(B "Reboot")
+
+MENU_ITEMS+=(C "Shutdown")
 
 MENU_CMD=(dialog --backtitle "$BACKTITLE" --title "$TITLE_MAIN_MENU" --menu "Choose an option" 24 74 18)
 
@@ -1470,14 +1675,16 @@ while true; do
     elif [[ $CHOICE = "6" ]]; then
         set_auto_restore
     elif [[ $CHOICE = "7" ]]; then
-        do_install_jump_start
+        show_current_auto_restore
     elif [[ $CHOICE = "8" ]]; then
-        do_install_stepnand
+        do_install_jump_start
     elif [[ $CHOICE = "9" ]]; then
-        do_change_command_rate
+        do_install_stepnand
     elif [[ $CHOICE = "A" ]]; then
-        do_reboot
+        do_change_command_rate
     elif [[ $CHOICE = "B" ]]; then
+        do_reboot
+    elif [[ $CHOICE = "C" ]]; then
         do_shutdown
     fi
 
