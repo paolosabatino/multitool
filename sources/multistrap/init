@@ -3,6 +3,7 @@
 # Mount the sys, proc, tmpfs filesystems
 mount -t sysfs /sys /sys
 mount -t tmpfs /tmp /tmp
+mount -t tmpfs /run /run
 mount -t proc /proc /proc
 mkdir -p /dev/pts
 mount -t devpts devpts /dev/pts
@@ -23,7 +24,7 @@ touch /tmp/resolv.conf
 /sbin/dhclient -lf /tmp/dhclient.leases -pf /tmp/dhclient.pid -nw eth0
 
 # Start ntp client daemon
-ntpd -g -G
+/usr/sbin/chronyd
 
 # Launch dropbear in daemon mode
 /usr/sbin/dropbear -B -b /etc/dropbear/banner
