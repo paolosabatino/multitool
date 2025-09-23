@@ -819,7 +819,7 @@ function set_auto_restore() {
 
     declare -a STR_FILES
 
-    local GLOB="${MOUNT_POINT}/*.gz"
+    local GLOB="${MOUNT_POINT}/backups/*.gz"
 
     local COUNTER=0
 
@@ -1795,6 +1795,12 @@ if [ "$EXIT_CODE" -eq 1 ]; then
 
 fi
 
+# Detect available eMMC devices
+find_mmc_devices
+
+# Detect special devices (NAND, SPI, etc)
+find_special_devices
+
 # Store the name of the auto-restore file
 FLAG_FILE="${MOUNT_POINT}/auto_restore.flag"
 
@@ -1823,10 +1829,20 @@ if [ -f "$FLAG_FILE" ]; then
             if [ -f "$RESTORE_FILE" ]; then
 
                 dialog --backtitle "$BACKTITLE" \
-                    --exit-label "Proceed" \
-                    --msgbox "Tem arquivo de auto restore!" 0 0
+                    --timeout 10 \
+                    --yes-label "Proceed" \
+                    --no-label "Cancel" \
+                    --title "Auto-Restore Backup" \
+                    --yesno "\nAn auto-restore operation is configured.\n\nBackup file: $FLAG_CONTENTS\n\nIn 10 seconds the restore will start automatically.\n\nPress 'Cancel' to abort the auto-restore." 15 70
 
-                # do_auto_restore
+                EXIT_CODE=$?
+
+                # If the exit code is 1 (user pressed "Cancel"), do nothing.
+                if [ "$EXIT_CODE" -ne 1 ]; then
+
+                    do_auto_restore
+
+                fi
 
             fi
 
@@ -1845,9 +1861,6 @@ fi
 # Unmount the multitool partition
 sync
 unmount_mt_partition
-
-find_mmc_devices
-find_special_devices
 
 declare -a MENU_ITEMS
 
