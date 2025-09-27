@@ -191,17 +191,52 @@ function unmount_mt_partition() {
 # Reboots the system safely
 #
 # This function ensures all data is written to disk, unmounts the multitool partition,
-# and triggers a system reboot using the sysrq mechanism.
+# and triggers a system reboot using the sysrq mechanism with proper sequencing.
+# The implementation includes graceful process termination, data synchronization,
+# filesystem remounting as read-only, and safe reboot using sysrq triggers with
+# appropriate delays between each step to ensure system stability.
 #
 # @author Paolo Sabatino
+# @modified Pedro Rigolin - Enhanced with sysrq sequence and safety delays
 function do_reboot() {
 
     # Ensure all data is written
     sync
     unmount_mt_partition
 
+    # Show reboot message
+    dialog --backtitle "$BACKTITLE" \
+        --title "Reboot" \
+        --infobox "\nSystem is going down for reboot..." 6 50
+
+    # Allow time for the infobox to be read
+    sleep 2
+
+    # E - Terminate all processes gracefully
+    echo e > /proc/sysrq-trigger
+
+    # Pause to allow processes to terminate
     sleep 1
 
+    # I - Kill all processes that did not terminate
+    echo i > /proc/sysrq-trigger
+
+    # Pause to ensure processes are killed
+    sleep 1
+
+    # S - Sync all data to disks
+    echo s > /proc/sysrq-trigger
+
+    # Pause to allow the sync to complete
+    sleep 1
+
+    # U - Remount all filesystems as read-only
+    echo u > /proc/sysrq-trigger
+
+    # Pause to allow filesystems to be remounted
+    sleep 1
+
+    # B - Reboot the system
     echo b > /proc/sysrq-trigger
 
 }
@@ -209,17 +244,52 @@ function do_reboot() {
 # Shuts down the system safely
 #
 # This function ensures all data is written to disk, unmounts the multitool partition,
-# and triggers a system shutdown using the sysrq mechanism.
+# and triggers a system shutdown using the sysrq mechanism with proper sequencing.
+# The implementation includes graceful process termination, data synchronization,
+# filesystem remounting as read-only, and safe power-off using sysrq triggers with
+# appropriate delays between each step to ensure system stability.
 #
 # @author Paolo Sabatino
+# @modified Pedro Rigolin - Enhanced with sysrq sequence and safety delays
 function do_shutdown() {
 
     # Ensure all data is written
     sync
     unmount_mt_partition
 
+    # Show shutdown message
+    dialog --backtitle "$BACKTITLE" \
+        --title "Shutdown" \
+        --infobox "\nSystem is going down for shutdown..." 6 50
+
+    # Allow time for the infobox to be read
+    sleep 2
+
+    # E - Terminate all processes gracefully
+    echo e > /proc/sysrq-trigger
+
+    # Pause to allow processes to terminate
     sleep 1
 
+    # I - Kill all processes that did not terminate
+    echo i > /proc/sysrq-trigger
+
+    # Pause to ensure processes are killed
+    sleep 1
+
+    # S - Sync all data to disks
+    echo s > /proc/sysrq-trigger
+
+    # Pause to allow the sync to complete
+    sleep 1
+
+    # U - Remount all filesystems as read-only
+    echo u > /proc/sysrq-trigger
+
+    # Pause to allow filesystems to be remounted
+    sleep 1
+
+    # O - Power Off the system
     echo o > /proc/sysrq-trigger
 
 }
@@ -1863,8 +1933,6 @@ sync
 unmount_mt_partition
 
 declare -a MENU_ITEMS
-
-#?? ESTÁ MOSTRANDO O MENU DE CRÉDITOS NA PRIMEIRA VEZ QUE CHAMA A FUNÇÃO SET AUTO RESTORE??
 
 MENU_ITEMS+=(1 "Backup flash")
 
