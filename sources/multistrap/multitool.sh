@@ -1883,6 +1883,7 @@ if [ -f "$FLAG_FILE" ]; then
     # Check if the content is not empty
     if [ -n "$FLAG_CONTENTS" ]; then
 
+        # TODO: ALTERAR PARA USAR O get_compression_format
         if [ [ "$FLAG_CONTENTS" != *.gz ] ]; then
 
             inform_wait "\nThe auto-restore file ($FLAG_CONTENTS) is not a valid backup file (must end with .gz).\n\nThe flag file will be cleared."

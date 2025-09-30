@@ -23,11 +23,129 @@ if [ "$USERID" != "0" ]; then
 	exit 26
 fi
 
+# Parse command line options using getopt
+# Supported options: --embed-file (with argument) and --set-auto-restore (flag)
+# @author: Pedro Rigolin
+PARSED_OPTIONS=$(getopt -o "" --long embed-file:,set-auto-restore -- "$@")
+
+# Check if getopt parsing was successful
+# @author: Pedro Rigolin
+if [ $? -ne 0 ]; then
+	echo "Error: Invalid arguments."
+	exit 1
+fi
+
+# Set positional parameters to the parsed options
+# @author: Pedro Rigolin
+eval set -- "$PARSED_OPTIONS"
+
+# Initialize default values for command line options
+# @author: Pedro Rigolin
+SET_AUTO_RESTORE=false
+EMBED_FILE=""
+
+# Process parsed command line arguments
+# Loop through all arguments and handle each option accordingly
+# @author: Pedro Rigolin
+while true; do
+    case "$1" in
+        --embed-file)
+            # Set the file to embed, trimming whitespace
+            # @author: Pedro Rigolin
+            EMBED_FILE="$(echo -n "$2" | xargs)"
+            shift 2
+            ;;
+        --set-auto-restore)
+            # Enable auto restore functionality
+            # @author: Pedro Rigolin
+            SET_AUTO_RESTORE=true
+            shift
+            ;;
+        --)
+            # End of options marker, break the loop
+            # @author: Pedro Rigolin
+            shift
+            break
+            ;;
+    esac
+done
+
+# Get the target configuration name from the first positional argument
 TARGET_CONF="$1"
 
+# Validate that a target configuration was provided
 if [ -z "$TARGET_CONF" ]; then
 	echo "Please specify a target configuration"
 	exit 40
+fi
+
+# Initialize the embed file name variable
+# @author: Pedro Rigolin
+EMBED_FILE_NAME=""
+
+# Initialize the embed file checksum variable (not used currently)
+# @author: Pedro Rigolin
+EMBED_FILE_CHECKSUM=""
+
+# Validate embed file if specified
+# Check if the file exists and is a valid gzip compressed file
+# @author: Pedro Rigolin
+if [ -n "$EMBED_FILE" ]; then
+
+	# Check if the embed file exists
+	# @author: Pedro Rigolin
+	if [ ! -f "$EMBED_FILE" ]; then
+
+		echo "Could not find file to embed: $EMBED_FILE"
+
+		exit 43
+
+	fi
+
+	# Check if pigz command is available in the system
+	# @author: Pedro Rigolin
+	command -v pigz >/dev/null 2>&1
+
+	# If pigz is not found, display error message and exit
+	# @author: Pedro Rigolin
+	if [ $? -ne 0 ]; then
+
+		echo "pigz command not found. Please install pigz package."
+
+		exit 43
+
+	fi
+
+	# Verify that the embed file is a valid gzip compressed file using pigz
+	# @author: Pedro Rigolin
+	pigz -l "$EMBED_FILE" >/dev/null 2>&1
+
+	# Exit if the file is not a valid gzip compressed file
+	# @author: Pedro Rigolin
+	if [ $? -ne 0 ]; then
+
+		echo "The file to embed ($EMBED_FILE) is not a valid gzip compressed file."
+
+		exit 44
+
+	fi
+
+	# Extract just the file name from the full path for later use
+	# @author: Pedro Rigolin
+	EMBED_FILE_NAME="$(basename "$EMBED_FILE")"
+
+	# Calculate the SHA256 checksum of the embed file for integrity verification
+	# @author: Pedro Rigolin
+	EMBED_FILE_CHECKSUM=$(sha256sum "$EMBED_FILE" | awk '{ print $1 }')
+
+fi
+
+# Check if auto restore is enabled but no embed file was specified
+# @author: Pedro Rigolin
+if [ "$SET_AUTO_RESTORE" = true ] && [ -z "$EMBED_FILE" ]; then
+
+	echo "WARNING: You have enabled auto restore functionality but did not specify a file to embed."
+
 fi
 
 if [ ! -f "${SOURCES_PATH}/${TARGET_CONF}.conf" ]; then
@@ -92,9 +210,46 @@ cd "$CWD"
 
 echo "-> rootfs size: ${ROOTFS_SIZE}kb"
 
+# Define the base image size in Megabytes, same as the original script
+# @author: Pedro Rigolin
+BASE_SIZE_MB=512
+
+# Convert the base size to Kilobytes for calculations
+# @author: Pedro Rigolin
+BASE_SIZE_KB=$((BASE_SIZE_MB * 1024))
+
+# Add an extra security buffer (e.g.: 50MB) to ensure everything fits
+# @author: Pedro Rigolin
+BUFFER_KB=51200
+
+# Initialize the size of the file to be embedded as zero
+# @author: Pedro Rigolin
+EMBED_FILE_SIZE_KB=0
+
+# If the user specified a file to embed...
+# @author: Pedro Rigolin
+if [ -n "$EMBED_FILE" ]; then
+
+    echo "--> Calculating size of embed file: $EMBED_FILE"
+
+    # ...calculate its size in Kilobytes
+    # @author: Pedro Rigolin
+    EMBED_FILE_SIZE_KB=$(du -k "$EMBED_FILE" | cut -f 1)
+
+fi
+
+# Calculate the final image size by adding base + embedded file + buffer
+# @author: Pedro Rigolin
+FINAL_IMAGE_SIZE_KB=$((BASE_SIZE_KB + EMBED_FILE_SIZE_KB + BUFFER_KB))
+
+echo "--> Final image size: ${FINAL_IMAGE_SIZE_KB}kb"
+
 echo "Creating empty image in $DEST_IMAGE"
 #dd if=/dev/zero of="$DEST_IMAGE" bs=1M count=1024 conv=sync,fsync >/dev/null 2>&1
-fallocate -l 512M "$DEST_IMAGE" >/dev/null 2>&1
+# fallocate -l 512M "$DEST_IMAGE" >/dev/null 2>&1
+
+# Create the image with the calculated final size (using 'K' for Kilobytes)
+fallocate -l ${FINAL_IMAGE_SIZE_KB}K "$DEST_IMAGE" >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Error while creating $DEST_IMAGE empty file"
@@ -318,12 +473,37 @@ if [ $? -ne 0 ]; then
 	exit 30
 fi
 
-# Image name to restore, passed as the second script parameter
-#
+# Check if an embed file was specified and copy it to backups directory
 # @author: Pedro Rigolin
-AUTO_RESTORE_PARAM="$(echo -n "$2" | xargs)"
+if [ -n "$EMBED_FILE" ]; then
 
-echo "Auto restore image parameter: $AUTO_RESTORE_PARAM"
+	echo "Embedding file $EMBED_FILE into backups directory"
+
+	cp "$EMBED_FILE" "${TEMP_DIR}/backups/$EMBED_FILE_NAME"
+
+	# Exit with error if the embed file copy operation failed
+	# @author: Pedro Rigolin
+	if [ $? -ne 0 ]; then
+	
+		echo "Could not copy embed file to backups directory"
+	
+		exit 43
+
+	fi
+
+fi
+
+# Display the current auto restore configuration status
+# @author: Pedro Rigolin
+echo "Auto restore image status: $SET_AUTO_RESTORE"
+
+# If auto restore is enabled, show the embed file details
+# @author: Pedro Rigolin
+if [ "$SET_AUTO_RESTORE" = true ]; then
+
+	echo "Auto restore content: $EMBED_FILE_CHECKSUM $EMBED_FILE_NAME"
+
+fi
 
 # Create the auto_restore.flag file to enable automatic restore on boot
 # The image to restore is specified by the user as the second parameter
@@ -331,7 +511,7 @@ echo "Auto restore image parameter: $AUTO_RESTORE_PARAM"
 #
 # @author: Pedro Rigolin
 echo "Creating auto_restore.flag"
-echo -n "$2" > "${TEMP_DIR}/auto_restore.flag"
+echo "${EMBED_FILE_CHECKSUM} ${EMBED_FILE_NAME}" > "${TEMP_DIR}/auto_restore.flag"
 
 echo "Copying board support package blobs into bsp directory"
 cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"
