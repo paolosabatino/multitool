@@ -17,8 +17,15 @@ touch /tmp/resolv.conf
 # Raise network interface
 /sbin/ifconfig eth0 up
 
-# Provide a fixed link-local address to eth0:1 virtual interface (give 5 seconds timeout
+# Provide a fixed link-local address to eth0:1 virtual interface
 /sbin/ifconfig eth0:1 169.254.120.120/16 
+
+# Spawn a shell on ttyS2 serial port, always available
+#setsid getty --autologin root ttyS2 &
+getty --autologin root ttyS2 &
+
+# Start haveged to avoid kernel low entropy conditions
+/sbin/haveged -T 2
 
 # Run dhclient in daemon mode
 /sbin/dhclient -lf /tmp/dhclient.leases -pf /tmp/dhclient.pid -nw eth0
@@ -28,10 +35,6 @@ touch /tmp/resolv.conf
 
 # Launch dropbear in daemon mode
 /usr/sbin/dropbear -B -b /etc/dropbear/banner
-
-# Spawn a shell on ttyS2 serial port, always available
-#setsid getty --autologin root ttyS2 &
-getty --autologin root ttyS2 &
 
 # Check if the multitool "MT" partition requires a resize
 DEVICE_MT_PARTITION=$(blkid --label "MULTITOOL" -l) # eg: /dev/mmcblk0p2

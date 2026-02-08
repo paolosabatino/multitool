@@ -221,7 +221,7 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Formatting NTFS partition"
-mkfs.ntfs -f -L "MULTITOOL" -p $START_NTFS -H 65535 -S 65535 -c 16384 "$NTFS_PARTITION" >/dev/null 2>&1
+mkfs.ntfs -f -L "MULTITOOL" -p $START_NTFS "$NTFS_PARTITION" >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
 	echo "Could not format NTFS partition"
