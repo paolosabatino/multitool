@@ -12,6 +12,8 @@ function round_sectors() {
 
 BACKTITLE="TUI Multitool Image Builder"
 
+FINAL_MESSAGE=""
+
 function show_error() {
 
     dialog \
@@ -602,9 +604,11 @@ if [ $? -ne 0 ]; then
 
 fi
 
+#!!WARNING!!: not sure if this works
+
 # Gather the PARTUUID of the squashfs partition loop device
 # blkid is friendlier in case of containers, so we use it here in place of lsblk
-SQUASHFS_PARTITION_UUID=$(blkid -o value -s PARTUUID $SQUASHFS_PARTITION)
+SQUASHFS_PARTITION_PARTUUID=$(blkid -o value -s PARTUUID $SQUASHFS_PARTITION)
 
 if [ $? -ne 0 ]; then
 
@@ -612,13 +616,13 @@ if [ $? -ne 0 ]; then
 
 fi
 
-#[[ -z $SQUASHFS_PARTITION_UUID ]] #&& echo "--- warning: empty squashfs partition UUID ---"
+[[ -z $SQUASHFS_PARTITION_PARTUUID ]] && FINAL_MESSAGE+="\n\n--- warning: empty squashfs partition PARTUUID ---"
 
-#echo "squashfs partition uuid: $SQUASHFS_PARTITION_UUID"
+FINAL_MESSAGE+="\n\nSquashfs partition partuuid: $SQUASHFS_PARTITION_PARTUUID"
 
-# Gather the UUID of the FAT partition of the loop device
+# Gather the PARTUUID of the FAT partition of the loop device
 # blkid is friendlier in case of containers, so we use it here in place of lsblk
-FAT_PARTITION_UUID=$(blkid -o value -s UUID $FAT_PARTITION)
+FAT_PARTITION_PARTUUID=$(blkid -o value -s PARTUUID $FAT_PARTITION)
 
 if [ $? -ne 0 ]; then
 
@@ -626,11 +630,11 @@ if [ $? -ne 0 ]; then
 
 fi
 
-#[[ -z $FAT_PARTITION_UUID ]] && echo "--- warning: empty FAT boot partition UUID ---"
+[[ -z $FAT_PARTITION_PARTUUID ]] && FINAL_MESSAGE+="\n\n--- warning: empty FAT boot partition PARTUUID ---"
 
-# echo "fat partition uuid: $FAT_PARTITION_UUID"
+FINAL_MESSAGE+="\n\nFat partition partuuid: $FAT_PARTITION_PARTUUID"
 
-sed -i "s/#SQUASHFS_PARTUUID#/$SQUASHFS_PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
+sed -i "s/#SQUASHFS_PARTUUID#/$SQUASHFS_PARTITION_PARTUUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
 
 if [ $? -ne 0 ]; then
 
@@ -638,7 +642,7 @@ if [ $? -ne 0 ]; then
 
 fi
 
-sed -i "s/#FAT_PARTUUID#/$FAT_PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
+sed -i "s/#FAT_PARTUUID#/$FAT_PARTITION_PARTUUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
 
 if [ $? -ne 0 ]; then
 
@@ -677,8 +681,10 @@ fi
 sync
 sleep 2
 
+FINAL_MESSAGE="\nDone! Available image in ${DEST_IMAGE}${FINAL_MESSAGE}"
+
 dialog \
     --backtitle "$BACKTITLE" \
     --title "Success" \
     --ok-label "OK" \
-    --msgbox "\nDone! Available image in $DEST_IMAGE" 8 50
+    --msgbox "$FINAL_MESSAGE" 15 60
