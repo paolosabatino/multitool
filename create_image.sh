@@ -10,11 +10,253 @@ function round_sectors() {
 
 }
 
+BACKTITLE="TUI Multitool Image Builder"
+
+FINAL_MESSAGE=""
+RUN_START_EPOCH="$(date +%s)"
+LOGS_DIR=""
+LOG_FILE=""
+CURRENT_STAGE="startup"
+LAST_CMD_STATUS=""
+LAST_CMD_TEXT=""
+
+function show_error() {
+
+    local explicit_status="$2"
+    local status_to_log="${explicit_status:-${LAST_CMD_STATUS:-$?}}"
+    log_error "$1" "$status_to_log"
+
+    dialog \
+        --backtitle "$BACKTITLE" \
+        --title "Error" \
+        --ok-label "Exit" \
+        --msgbox "\n$1" 8 50
+
+    exit 1
+
+}
+
+function show_wait(){
+
+    log_stage "$1"
+
+    dialog \
+        --backtitle "$BACKTITLE" \
+        --title "Please wait" \
+        --infobox "\n$1" 8 50
+
+}
+
+function show_info() {
+
+    dialog \
+        --backtitle "$BACKTITLE" \
+        --title "Info" \
+        --ok-label "OK" \
+        --msgbox "\n$1" 8 50
+
+}
+
+function show_warning() {
+
+    dialog \
+        --backtitle "$BACKTITLE" \
+        --title "Warning" \
+        --ok-label "OK" \
+        --msgbox "\n$1" 8 50
+
+}
+
+function log_write() {
+
+    local level="$1"
+    local message="$2"
+
+    if [ -z "$LOG_FILE" ]; then
+        return 0
+    fi
+
+    printf "%s [%s] %s\n" "$(date "+%Y-%m-%d %H:%M:%S")" "$level" "$message" >> "$LOG_FILE" 2>/dev/null
+
+}
+
+function log_stage() {
+
+    CURRENT_STAGE="$1"
+    log_write "INFO" "stage: $1"
+
+}
+
+function log_error() {
+
+    local message="$1"
+    local status_code="$2"
+
+    log_write "ERROR" "stage: $CURRENT_STAGE | status: ${status_code:-unknown} | message: $message"
+
+}
+
+function log_vars() {
+
+    local scope="$1"
+    shift
+
+    local details="$*"
+    log_write "VARS" "$scope | $details"
+
+}
+
+function run_logged() {
+
+    local status
+
+    log_write "CMD" "$*"
+    LAST_CMD_TEXT="$*"
+
+    if [ -n "$LOG_FILE" ]; then
+        log_write "CMD_OUT_START" "$*"
+        "$@" >> "$LOG_FILE" 2>&1
+        log_write "CMD_OUT_END" "$*"
+    else
+        "$@" >/dev/null 2>&1
+    fi
+
+    status=$?
+    LAST_CMD_STATUS="$status"
+    log_write "CMD_RET" "exit=$status :: $*"
+
+    return $status
+
+}
+
+function run_logged_capture() {
+
+    local output_var="$1"
+    shift
+
+    local output
+    local status
+
+    log_write "CMD" "$*"
+    LAST_CMD_TEXT="$*"
+
+    if [ -n "$LOG_FILE" ]; then
+        output="$("$@" 2>> "$LOG_FILE")"
+    else
+        output="$("$@" 2>/dev/null)"
+    fi
+
+    status=$?
+    LAST_CMD_STATUS="$status"
+    log_write "CMD_RET" "exit=$status :: $*"
+
+    if [ -n "$output" ]; then
+        log_write "RAW_CAPTURE" "$output"
+    fi
+
+    printf -v "$output_var" '%s' "$output"
+
+    return $status
+
+}
+
+function run_logged_to_file() {
+
+    local dest_file="$1"
+    shift
+
+    local status
+
+    log_write "CMD" "$* > $dest_file"
+    LAST_CMD_TEXT="$* > $dest_file"
+
+    if [ -n "$LOG_FILE" ]; then
+        log_write "CMD_OUT_START" "$* > $dest_file"
+        "$@" > "$dest_file" 2>> "$LOG_FILE"
+        log_write "CMD_OUT_END" "$* > $dest_file"
+    else
+        "$@" > "$dest_file" 2>/dev/null
+    fi
+
+    status=$?
+    LAST_CMD_STATUS="$status"
+    log_write "CMD_RET" "exit=$status :: $* > $dest_file"
+
+    return $status
+
+}
+
+function rotate_logs() {
+
+    local files=()
+
+    if [ ! -d "$LOGS_DIR" ]; then
+        return 0
+    fi
+
+    mapfile -t files < <(ls -1t "$LOGS_DIR"/build-*.log 2>/dev/null)
+
+    if [ "${#files[@]}" -le 10 ]; then
+        return 0
+    fi
+
+    for old_log in "${files[@]:10}"; do
+        rm -f "$old_log" >/dev/null 2>&1
+    done
+
+}
+
+function init_logs() {
+
+    local run_timestamp
+
+    mkdir -p "$LOGS_DIR" >/dev/null 2>&1
+
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    run_timestamp="$(date "+%Y%m%d-%H%M%S")"
+    LOG_FILE="$LOGS_DIR/build-${run_timestamp}-unknown.log"
+
+    touch "$LOG_FILE" >/dev/null 2>&1
+
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    rotate_logs
+
+    log_write "INFO" "build started"
+    log_write "INFO" "cwd: $CWD"
+
+    return 0
+
+}
+
+function log_summary() {
+
+    local status="$1"
+    local elapsed_seconds="$(($(date +%s) - RUN_START_EPOCH))"
+
+    log_write "SUMMARY" "status: $status"
+    log_write "SUMMARY" "image: $DEST_IMAGE"
+    log_write "SUMMARY" "duration_seconds: $elapsed_seconds"
+
+    if [ -n "$SQUASHFS_PARTITION_PARTUUID" ]; then
+        log_write "SUMMARY" "squashfs_partuuid: $SQUASHFS_PARTITION_PARTUUID"
+    fi
+
+    if [ -n "$FAT_PARTITION_PARTUUID" ]; then
+        log_write "SUMMARY" "fat_partuuid: $FAT_PARTITION_PARTUUID"
+    fi
+
+}
+
 CWD=$(pwd)
 SOURCES_PATH="$CWD/sources"
 TOOLS_PATH="$CWD/tools"
-
-# Script to create the multitool image for rk322x boards
+LOGS_DIR="$CWD/logs"
 
 USERID=$(id -u)
 
@@ -23,97 +265,319 @@ if [ "$USERID" != "0" ]; then
 	exit 26
 fi
 
-TARGET_CONF="$1"
+MOUNTED_DEVICES=()
 
-if [ -z "$TARGET_CONF" ]; then
+LOOP_DEVICES=()
+
+MOUNTED_POINTS=()
+
+function cleanup() {
+
+    log_write "INFO" "cleanup started"
+
+    for device in "${MOUNTED_DEVICES[@]}"; do
+        log_vars "cleanup-mount" "candidate=$device"
+
+        if mountpoint -q "$device"; then
+            log_write "INFO" "cleanup unmounting mountpoint=$device"
+
+            umount "$device" >/dev/null 2>&1
+
+        fi
+
+    done
+
+    for loop in "${LOOP_DEVICES[@]}"; do
+        log_vars "cleanup-loop" "candidate=$loop"
+
+        if losetup -l | grep -q "$loop"; then
+            log_write "INFO" "cleanup detaching loop=$loop"
+
+            losetup -d "$loop" >/dev/null 2>&1
+
+        fi
+
+    done
+
+    for point in "${MOUNTED_POINTS[@]}"; do
+        log_vars "cleanup-temp" "removing=$point"
+
+        rm -rf "$point" >/dev/null 2>&1
+
+    done
+
+    clear
+
+    echo "Script finished. All temporary devices cleaned up."
+
+    log_write "INFO" "cleanup finished"
+
+}
+
+trap cleanup EXIT
+
+function mount_device() {
+
+    local device="$1"
+    local mount_point="$2"
+
+    run_logged mount "$device" "$mount_point"
+
+    if [ $? -ne 0 ]; then
+        return $?
+    fi
+
+    MOUNTED_DEVICES+=("$mount_point")
+    MOUNTED_POINTS+=("$mount_point")
+
+}
+
+function unmount_device() {
+
+    local device="$1"
+
+    if mountpoint -q "$device"; then
+
+        run_logged umount "$device"
+
+        if [ $? -ne 0 ]; then
+            return $?        
+        fi
+
+        for i in "${!MOUNTED_DEVICES[@]}"; do
+
+            if [ "${MOUNTED_DEVICES[$i]}" == "$device" ]; then
+                unset 'MOUNTED_DEVICES[i]'
+                break
+            fi
+
+        done
+
+    fi
+
+}
+
+function attach_loop() {
+
+    local file="$1"
+
+    local loop=""
+
+    run_logged_capture loop losetup -fP --show "$file"
+
+    if [ $? -ne 0 ]; then
+        return $?
+    fi
+
+    LOOP_DEVICE="$loop"
+    LOOP_DEVICES+=("$loop")
+
+    return 0
+
+}
+
+function detach_loop() {
+
+    local loop="$1"
+
+    if losetup -l | grep -q "$loop"; then
+
+        run_logged losetup -d "$loop"
+
+        if [ $? -ne 0 ]; then
+            return $?
+        fi
+
+        for i in "${!LOOP_DEVICES[@]}"; do
+
+            if [ "${LOOP_DEVICES[$i]}" == "$loop" ]; then
+                unset 'LOOP_DEVICES[i]'
+                break
+            fi
+
+        done
+
+    fi
+
+}
+
+if ! init_logs; then
+
+    LOG_FILE=""
+    show_warning "Could not initialize log file in $LOGS_DIR"
+
+fi
+
+shopt -s nullglob
+
+conf_files=(sources/*.conf)
+log_vars "config-discovery" "found_conf_files=${#conf_files[@]}"
+
+if [ "${#conf_files[@]}" -eq 0 ]; then
+
+    show_error "No configuration files found in sources/ directory"
+
+    exit 1
+
+fi
+
+options=()
+
+for i in "${!conf_files[@]}"; do
+
+  file="${conf_files[$i]}"
+
+  base="$(basename "$file" .conf)"
+
+  pretty="$(echo "$base" | sed -E 's/[_-]+/ /g')"
+
+  options+=("$i" "$pretty")
+
+done
+
+choice=$(dialog \
+        --clear \
+        --stdout \
+        --backtitle "$BACKTITLE" \
+        --title "Choose" \
+        --ok-label "Select" \
+        --cancel-label "Exit" \
+        --menu "\nChoose a configuration" 15 70 12 "${options[@]}")
+
+status=$?
+log_vars "config-selection" "dialog_status=$status selected_index=$choice"
+
+if [ "$status" -ne 0 ]; then
+
+    log_write "INFO" "configuration selection canceled by user"
+
 	echo "Please specify a target configuration"
+
 	exit 40
+
 fi
 
-if [ ! -f "${SOURCES_PATH}/${TARGET_CONF}.conf" ]; then
-	echo "Could not find ${TARGET_CONF}.conf target configuration file"
+TARGET_CONF="$CWD/${conf_files[$choice]}"
+log_vars "config-selection" "target_conf=$TARGET_CONF"
+
+if [ ! -f "$TARGET_CONF" ]; then
+
+    show_error "Could not find ${conf_files[$choice]} target configuration file"
+
 	exit 42
+
 fi
 
-. "${SOURCES_PATH}/${TARGET_CONF}.conf"
+. "${TARGET_CONF}"
 
 if [ $? -ne 0 ]; then
-	echo "Could not source ${TARGET_CONF}.conf"
+
+    show_error "Could not source ${TARGET_CONF}"
+
 	exit 41
+
+fi
+
+BOARD_NAME=$(echo "$TARGET_CONF" | sed -E 's/.*sources\/(.*)\.conf/\1/')
+
+log_write "INFO" "target conf: $TARGET_CONF"
+
+log_vars "board" "board_name=$BOARD_NAME"
+
+NEW_LOG_FILENAME="${LOG_FILE/-unknown/-${BOARD_NAME}}"
+mv "$LOG_FILE" "$NEW_LOG_FILENAME" >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+
+    log_write "WARNING" "Could not rename log file to include board name"
+
+else
+
+    LOG_FILE="$NEW_LOG_FILENAME"
+    log_write "INFO" "Log file renamed to $LOG_FILE"
+
 fi
 
 # Target-specific sources path
-TS_SOURCES_PATH="$CWD/sources/${TARGET_CONF}"
+TS_SOURCES_PATH="$CWD/sources/${BOARD_NAME}"
 
 # Destination path and image
-DIST_PATH="${CWD}/dist-${TARGET_CONF}"
+DIST_PATH="${CWD}/dist-${BOARD_NAME}"
 DEST_IMAGE="${DIST_PATH}/multitool.img"
 
-mkdir -p "$DIST_PATH"
+log_vars "paths" "ts_sources_path=$TS_SOURCES_PATH dist_path=$DIST_PATH dest_image=$DEST_IMAGE"
+
+run_logged mkdir -p "$DIST_PATH"
 
 if [ ! -f "$DIST_PATH/root.img" ]; then
 
-	echo -n "Creating debian base rootfs. This will take a while..."
+    show_wait "Creating debian base rootfs. This will take a while..."
 
-	cd "${SOURCES_PATH}/multistrap"
-	multistrap -f multistrap.conf > /tmp/multistrap.log 2>&1
-
-	if [ $? -ne 0 ]; then
-		echo -e "\nfailed:"
-		tail /tmp/multistrap.log
-		echo -e "\nFull log at /tmp/multistrap.log"
-		exit 25
-	fi
-
-	echo "done!"
-
-	echo -n "Creating squashfs from rootfs..."
-	mksquashfs rootfs "$DIST_PATH/root.img" -noappend -all-root > /dev/null 2>&1
+    cd "${SOURCES_PATH}/multistrap"
+    run_logged multistrap -f multistrap.conf
 
 	if [ $? -ne 0 ]; then
-		echo -e "\nfailed"
-		exit 26
-	fi
 
-	echo "done"
+        show_error "Failed to run multistrap. Check log file for details"
+		
+	fi    
+
+    show_wait "Creating squashfs from rootfs..."
+
+    run_logged mksquashfs rootfs "$DIST_PATH/root.img" -noappend -all-root
+
+    if [ $? -ne 0 ]; then
+
+        show_error "Failed to create squashfs from rootfs"
+
+    fi
 
 fi
 
 ROOTFS_SIZE=$(du "$DIST_PATH/root.img" | cut -f 1)
-ROOTFS_SECTORS=$(($ROOTFS_SIZE * 2))
-ROOTFS_SECTORS=$(round_sectors $ROOTFS_SECTORS)
+log_write "RAW" "rootfs_size_kb=$ROOTFS_SIZE"
+ROOTFS_SECTORS_RAW=$(($ROOTFS_SIZE * 2))
+ROOTFS_SECTORS=$(round_sectors $ROOTFS_SECTORS_RAW)
+log_vars "rootfs" "rootfs_size_kb=$ROOTFS_SIZE rootfs_sectors_raw=$ROOTFS_SECTORS_RAW rootfs_sectors_rounded=$ROOTFS_SECTORS"
 
 if [ $? -ne 0 ]; then
-	echo -e "\ncould not determine size of squashfs root filesystem"
-	exit 27
+
+    show_error "Could not determine size of squashfs root filesystem"
+
 fi
 
 cd "$CWD"
 
-echo "-> rootfs size: ${ROOTFS_SIZE}kb"
+show_wait "Creating empty image in $DEST_IMAGE"
 
-echo "Creating empty image in $DEST_IMAGE"
-#dd if=/dev/zero of="$DEST_IMAGE" bs=1M count=1024 conv=sync,fsync >/dev/null 2>&1
-fallocate -l 512M "$DEST_IMAGE" >/dev/null 2>&1
+run_logged fallocate -l 512M "$DEST_IMAGE"
 
 if [ $? -ne 0 ]; then
-	echo "Error while creating $DEST_IMAGE empty file"
-	exit 1
+
+    show_error "Error while creating $DEST_IMAGE empty file"
+
 fi
 
-echo "Mounting as loop device"
-LOOP_DEVICE=$(losetup -f --show "$DEST_IMAGE")
+show_wait "Mounting as loop device"
+
+LOOP_DEVICE=""
+attach_loop "$DEST_IMAGE"
 
 if [ $? -ne 0 ]; then
-	echo "Could not loop mount $DEST_IMAGE"
-	exit 2
+
+    show_error "Could not loop mount $DEST_IMAGE"
+
 fi
 
-echo "Creating partition table and partitions"
-parted -s -- "$LOOP_DEVICE" mktable msdos >/dev/null 2>&1
+log_vars "loop" "loop_device=$LOOP_DEVICE"
+
+show_wait "Creating partition table and partitions..."
+
+run_logged parted -s -- "$LOOP_DEVICE" mktable msdos
+
 if [ $? -ne 0 ]; then
-	echo "Could not create partitions table"
-	exit 3
+
+    show_error "Could not create partitions table"
+
 fi
 
 START_ROOTFS=$BEGIN_USER_PARTITIONS
@@ -121,29 +585,37 @@ END_ROOTFS=$(($START_ROOTFS + $ROOTFS_SECTORS - 1))
 START_FAT=$(round_sectors $END_ROOTFS)
 END_FAT=$(($START_FAT + 131072 - 1)) # 131072 sectors = 64Mb
 START_NTFS=$(round_sectors $END_FAT)
-parted -s -- "$LOOP_DEVICE" unit s mkpart primary ntfs $START_NTFS -1s >/dev/null 2>&1
+log_vars "partition-layout" "begin_user_partitions=$BEGIN_USER_PARTITIONS start_rootfs=$START_ROOTFS end_rootfs=$END_ROOTFS start_fat=$START_FAT end_fat=$END_FAT start_ntfs=$START_NTFS"
+run_logged parted -s -- "$LOOP_DEVICE" unit s mkpart primary ntfs $START_NTFS -1s
+
 if [ $? -ne 0 ]; then
-	echo "Could not create ntfs partition"
-	exit 3
+
+	show_error "Could not create ntfs partition"
+
 fi
 
-parted -s -- "$LOOP_DEVICE" unit s mkpart primary fat32 $START_FAT $END_FAT >/dev/null 2>&1
+run_logged parted -s -- "$LOOP_DEVICE" unit s mkpart primary fat32 $START_FAT $END_FAT
+
 if [ $? -ne 0 ]; then
-	echo "Could not create fat partition"
-	exit 3
+
+	show_error "Could not create fat partition"
+
 fi
 
-parted -s -- "$LOOP_DEVICE" unit s mkpart primary $START_ROOTFS $END_ROOTFS >/dev/null 2>&1
+run_logged parted -s -- "$LOOP_DEVICE" unit s mkpart primary $START_ROOTFS $END_ROOTFS
+
 if [ $? -ne 0 ]; then
-	echo "Could not create rootfs partition"
-	exit 3
+
+	show_error "Could not create rootfs partition"
+
 fi
 
+run_logged parted -s -- "$LOOP_DEVICE" set 1 boot off set 2 boot on set 3 boot off
 
-parted -s -- "$LOOP_DEVICE" set 1 boot off set 2 boot on set 3 boot off >/dev/null 2>&1
 if [ $? -ne 0 ]; then
-	echo "Could not set partition flags"
-	exit 28
+
+	show_error "Could not set partition flags"
+
 fi
 
 sync
@@ -155,243 +627,340 @@ sleep 1
 SQUASHFS_PARTITION="${LOOP_DEVICE}p3"
 NTFS_PARTITION="${LOOP_DEVICE}p1"
 FAT_PARTITION="${LOOP_DEVICE}p2"
-echo "squashfs partition: $SQUASHFS_PARTITION"
-echo "fat partition: $FAT_PARTITION"
-echo "ntfs partition: $NTFS_PARTITION"
+log_vars "partitions-initial" "squashfs_partition=$SQUASHFS_PARTITION fat_partition=$FAT_PARTITION ntfs_partition=$NTFS_PARTITION"
 
 if [ ! -b "$SQUASHFS_PARTITION" -o ! -b "$FAT_PARTITION" -o ! -b "$NTFS_PARTITION" ]; then
-	echo "Remounting loop device with partitions"
-	losetup -d "$LOOP_DEVICE" >/dev/null 2>&1
+
+    show_wait "Remounting loop device with partitions..."
+
+    detach_loop "$LOOP_DEVICE"
 	sleep 1
 
-	if [ $? -ne 0 ]; then
-		echo "Could not umount loop device $LOOP_DEVICE"
-		exit 4
-	fi
+    if [ $? -ne 0 ]; then
 
-	LOOP_DEVICE=$(losetup -f --show -P "$DEST_IMAGE")
-	if [ $? -ne 0 ]; then
-		echo "Could not remount loop device $LOOP_DEVICE"
-		exit 5
-	fi
+        show_error "Could not umount loop device $LOOP_DEVICE"
+
+    fi
+
+    LOOP_DEVICE=""
+    attach_loop "$DEST_IMAGE"
+
+    if [ $? -ne 0 ]; then
+
+        show_error "Could not remount loop device $LOOP_DEVICE"
+
+    fi
 
 	SQUASHFS_PARTITION="${LOOP_DEVICE}p3"
 	NTFS_PARTITION="${LOOP_DEVICE}p1"
 	FAT_PARTITION="${LOOP_DEVICE}p2"
-	echo "squashfs partition after remount: $SQUASHFS_PARTITION"
-	echo "fat partition: after remount $FAT_PARTITION"
-	echo "ntfs partition: after remount $NTFS_PARTITION"
+    log_vars "partitions-remount" "loop_device=$LOOP_DEVICE squashfs_partition=$SQUASHFS_PARTITION fat_partition=$FAT_PARTITION ntfs_partition=$NTFS_PARTITION"
+    run_logged lsblk "$LOOP_DEVICE"
 
-	sleep 1
+    sleep 1    
+
+else
+
+    log_write "INFO" "remount not required; partitions already present"
+
 fi
 
-
 if [ ! -b "$SQUASHFS_PARTITION" ]; then
-	echo "Could not find expected partition $SQUASHFS_PARTITION"
-	exit 26
+
+	show_error "Could not find expected partition $SQUASHFS_PARTITION"
+
 fi
 
 if [ ! -b "$FAT_PARTITION" ]; then
-	echo "Could not find expected partition $FAT_PARTITION"
-	exit 6
+
+	show_error "Could not find expected partition $FAT_PARTITION"
+
 fi
 
 if [ ! -b "$NTFS_PARTITION" ]; then
-	echo "Could not find expected partition $NTFS_PARTITION"
-	exit 6
+
+	show_error "Could not find expected partition $NTFS_PARTITION"
+
 fi
 
-echo "Copying squashfs rootfilesystem"
-dd if="${DIST_PATH}/root.img" of="$SQUASHFS_PARTITION" bs=4k conv=sync,fsync >/dev/null 2>&1
+show_wait "Copying squashfs rootfilesystem..."
+run_logged dd if="${DIST_PATH}/root.img" of="$SQUASHFS_PARTITION" bs=4k conv=sync,fsync
 
 if [ $? -ne 0 ]; then
-	echo "Could not install squashfs filesystem"
-	exit 27
+
+	show_error "Could not install squashfs filesystem"
+
 fi
 
 # ---- boot install -----
-source "${TS_SOURCES_PATH}/boot_install"
+log_write "CMD" "source ${TS_SOURCES_PATH}/boot_install"
+if [ -n "$LOG_FILE" ]; then
+    log_write "CMD_OUT_START" "source ${TS_SOURCES_PATH}/boot_install"
+    source "${TS_SOURCES_PATH}/boot_install" >> "$LOG_FILE" 2>&1
+    log_write "CMD_OUT_END" "source ${TS_SOURCES_PATH}/boot_install"
+else
+    source "${TS_SOURCES_PATH}/boot_install" >/dev/null 2>&1
+fi
+LAST_CMD_STATUS="$?"
+LAST_CMD_TEXT="source ${TS_SOURCES_PATH}/boot_install"
+log_write "CMD_RET" "exit=$LAST_CMD_STATUS :: source ${TS_SOURCES_PATH}/boot_install"
 
-echo "Formatting FAT32 partition"
-mkfs.vfat -s 16 -n "BOOTSTRAP" "$FAT_PARTITION" >/dev/null 2>&1
+if [ "$LAST_CMD_STATUS" -ne 0 ]; then
 
-if [ $? -ne 0 ]; then
-	echo "Could not format FAT32 partition"
-	exit 7
+    show_error "Could not execute boot_install" "$LAST_CMD_STATUS"
+
 fi
 
-echo "Formatting NTFS partition"
-mkfs.ntfs -f -L "MULTITOOL" -p $START_NTFS "$NTFS_PARTITION" >/dev/null 2>&1
+show_wait "Formatting FAT32 partition..."
+
+run_logged mkfs.vfat -s 16 -n "BOOTSTRAP" "$FAT_PARTITION"
 
 if [ $? -ne 0 ]; then
-	echo "Could not format NTFS partition"
-	exit 7
+
+	show_error "Could not format FAT32 partition"
+
+fi
+
+show_wait "Formatting NTFS partition..."
+
+run_logged mkfs.ntfs -f -L "MULTITOOL" -p $START_NTFS "$NTFS_PARTITION"
+
+if [ $? -ne 0 ]; then
+
+	show_error "Could not format NTFS partition"
+
 fi
 
 TEMP_DIR=$(mktemp -d)
+log_vars "mount" "temp_dir=$TEMP_DIR"
 
-echo "Mounting NTFS partition"
-mount "$NTFS_PARTITION" "$TEMP_DIR" >/dev/null 2>&1
+show_wait "Mounting NTFS partition..."
+
+mount_device "$NTFS_PARTITION" "$TEMP_DIR"
 
 if [ $? -ne 0 ]; then
-	echo "Could not mount $NTFS_PARTITION to $TEMP_DIR"
-	exit 9
+
+	show_error "Could not mount $NTFS_PARTITION to $TEMP_DIR"
+
 fi
 
-echo "Populating partition"
+show_wait "Populating partition..."
 
-cp "${CWD}/LICENSE" "${TEMP_DIR}/LICENSE"
+run_logged cp "${CWD}/LICENSE" "${TEMP_DIR}/LICENSE"
+
 if [ $? -ne 0 ]; then
-	echo "Could not copy LICENSE to partition"
-	exit 28
+
+	show_error "Could not copy LICENSE to partition"
+
 fi
 
-git log --no-merges --pretty="%as: %s" > "${TEMP_DIR}/CHANGELOG"
+run_logged_to_file "${TEMP_DIR}/CHANGELOG" git log --no-merges --pretty="%as: %s"
+
 if [ $? -ne 0 ]; then
-	echo "Could not store CHANGELOG to partition"
+
+	show_error "Could not store CHANGELOG to partition"
+
 fi
 
-git log -1 --pretty="%h - %aD" > "${TEMP_DIR}/ISSUE"
+run_logged_to_file "${TEMP_DIR}/ISSUE" git log -1 --pretty="%h - %aD"
+
 if [ $? -ne 0 ]; then
-	echo "Could not store ISSUE to paritition"
+
+	show_error "Could not store ISSUE to paritition"
+
 fi
 
-echo "${TARGET_CONF}" > "${TEMP_DIR}/TARGET"
+printf "%s\n" "${BOARD_NAME}" > "${TEMP_DIR}/TARGET"
+
 if [ $? -ne 0 ]; then
-	echo "Could not store TARGET to partition"
+
+	show_error "Could not store TARGET to partition"
+
 fi
 
-mkdir -p "${TEMP_DIR}/backups"
+run_logged mkdir -p "${TEMP_DIR}/backups"
+
 if [ $? -ne 0 ]; then
-	echo "Could not create backup directory"
-	exit 28
+
+	show_error "Could not create backup directory"
+
 fi
 
-mkdir -p "${TEMP_DIR}/images"
+run_logged mkdir -p "${TEMP_DIR}/images"
+
 if [ $? -ne 0 ]; then
-	echo "Could not create images directory"
-	exit 29
+
+	show_error "Could not create images directory"
+
 fi
 
-mkdir -p "${TEMP_DIR}/bsp"
+run_logged mkdir -p "${TEMP_DIR}/bsp"
+
 if [ $? -ne 0 ]; then
-	echo "Could not create bsp directory"
-	exit 30
+
+	show_error "Could not create bsp directory"
+
 fi
 
-echo "Copying board support package blobs into bsp directory"
-cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"
+show_wait "Copying board support package blobs into bsp directory..."
 
-[[ -f "${DIST_PATH}/trustos.img" ]] && cp "${DIST_PATH}/trustos.img" "${TEMP_DIR}/bsp/trustos.img"
-[[ -f "${DIST_PATH}/legacy-uboot.img" ]] && cp "${DIST_PATH}/legacy-uboot.img" "${TEMP_DIR}/bsp/legacy-uboot.img"
+run_logged cp "${DIST_PATH}/uboot.img" "${TEMP_DIR}/bsp/uboot.img"
 
-echo "Unmount NTFS partition"
-umount "$NTFS_PARTITION" >/dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-	echo "Could not umount $NTFS_PARTITION"
-	exit 17
+if [ -f "${DIST_PATH}/trustos.img" ]; then
+    run_logged cp "${DIST_PATH}/trustos.img" "${TEMP_DIR}/bsp/trustos.img"
 fi
 
-echo "Mounting FAT32 partition"
-if [ $? -ne 0 ]; then
-	echo "Could not create temporary directory"
-	exit 8
+if [ -f "${DIST_PATH}/legacy-uboot.img" ]; then
+    run_logged cp "${DIST_PATH}/legacy-uboot.img" "${TEMP_DIR}/bsp/legacy-uboot.img"
 fi
 
-mount "$FAT_PARTITION" "$TEMP_DIR" >/dev/null 2>&1
+show_wait "Unmount NTFS partition..."
+
+unmount_device "$TEMP_DIR"
 
 if [ $? -ne 0 ]; then
-	echo "Could not mount $FAT_PARTITION to $TEMP_DIR"
-	exit 9
+
+	show_error "Could not umount $NTFS_PARTITION"
+
 fi
 
-echo "Populating partition"
-cp "${TS_SOURCES_PATH}/${KERNEL_IMAGE}" "${TEMP_DIR}/kernel.img" > /dev/null 2>&1
+show_wait "Mounting FAT32 partition..."
+
 if [ $? -ne 0 ]; then
-	echo "Could not copy kernel"
-	exit 10
+
+	show_error "Could not create temporary directory"
+
 fi
 
-cp "${TS_SOURCES_PATH}/${DEVICE_TREE}" "${TEMP_DIR}/${DEVICE_TREE}" >/dev/null 2>&1
+mount_device "$FAT_PARTITION" "$TEMP_DIR"
+
 if [ $? -ne 0 ]; then
-	echo "Could not copy device tree"
-	exit 12
+
+	show_error "Could not mount $FAT_PARTITION to $TEMP_DIR"
+
 fi
 
-mkdir -p "${TEMP_DIR}/extlinux"
+show_wait "Populating partition..."
+
+run_logged cp "${TS_SOURCES_PATH}/${KERNEL_IMAGE}" "${TEMP_DIR}/kernel.img"
+
 if [ $? -ne 0 ]; then
-	echo "Could not create extlinux directory"
-	exit 13
+
+	show_error "Could not copy kernel"
+    
 fi
 
-cp "${TS_SOURCES_PATH}/extlinux.conf" "${TEMP_DIR}/extlinux/extlinux.conf" >/dev/null 2>&1
+run_logged cp "${TS_SOURCES_PATH}/${DEVICE_TREE}" "${TEMP_DIR}/${DEVICE_TREE}"
+
 if [ $? -ne 0 ]; then
-	echo "Could not copy extlinux.conf"
-	exit 14
+
+	show_error "Could not copy device tree"
+
+fi
+
+run_logged mkdir -p "${TEMP_DIR}/extlinux"
+
+if [ $? -ne 0 ]; then
+
+	show_error "Could not create extlinux directory"
+
+fi
+
+run_logged cp "${TS_SOURCES_PATH}/extlinux.conf" "${TEMP_DIR}/extlinux/extlinux.conf"
+
+if [ $? -ne 0 ]; then
+
+	show_error "Could not copy extlinux.conf"
+
 fi
 
 # Gather the PARTUUID of the squashfs partition loop device
 # blkid is friendlier in case of containers, so we use it here in place of lsblk
-SQUASHFS_PARTITION_UUID=$(blkid -o value -s PARTUUID $SQUASHFS_PARTITION)
+run_logged_capture SQUASHFS_PARTITION_PARTUUID blkid -o value -s PARTUUID "$SQUASHFS_PARTITION"
+log_vars "partuuid" "squashfs_partition_partuuid=$SQUASHFS_PARTITION_PARTUUID"
+
 if [ $? -ne 0 ]; then
-	echo "Could not get SQUASHFS PARTUUID"
-	exit 15
+
+	show_error "Could not get SQUASHFS PARTUUID"
+
 fi
 
-[[ -z $SQUASHFS_PARTITION_UUID ]] && echo "--- warning: empty squashfs partition UUID ---"
+[[ -z $SQUASHFS_PARTITION_PARTUUID ]] && FINAL_MESSAGE+="\n\n--- warning: empty squashfs partition PARTUUID ---"
 
-echo "squashfs partition uuid: $SQUASHFS_PARTITION_UUID"
+FINAL_MESSAGE+="\n\nSquashfs partition partuuid: $SQUASHFS_PARTITION_PARTUUID"
 
-# Gather the UUID of the FAT partition of the loop device
+# Gather the PARTUUID of the FAT partition of the loop device
 # blkid is friendlier in case of containers, so we use it here in place of lsblk
-FAT_PARTITION_UUID=$(blkid -o value -s UUID $FAT_PARTITION)
-if [ $? -ne 0 ]; then
-	echo "Could not get FAT PARTUUID"
-	exit 15
-fi
-
-[[ -z $FAT_PARTITION_UUID ]] && echo "--- warning: empty FAT boot partition UUID ---"
-
-echo "fat partition uuid: $FAT_PARTITION_UUID"
-
-sed -i "s/#SQUASHFS_PARTUUID#/$SQUASHFS_PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
-if [ $? -ne 0 ]; then
-	echo "Could not substitute SQUASHFS PARTUUID in extlinux.conf"
-	exit 16
-fi
-
-sed -i "s/#FAT_PARTUUID#/$FAT_PARTITION_UUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
-if [ $? -ne 0 ]; then
-	echo "Could not substitute FAT PARTUUID in extlinux.conf"
-	exit 16
-fi
-
-echo "Unmount FAT32 partition"
-umount "$FAT_PARTITION" >/dev/null 2>&1
+run_logged_capture FAT_PARTITION_PARTUUID blkid -o value -s PARTUUID "$FAT_PARTITION"
+log_vars "partuuid" "fat_partition_partuuid=$FAT_PARTITION_PARTUUID"
 
 if [ $? -ne 0 ]; then
-	echo "Could not umount $FAT_PARTITION"
-	exit 17
+
+	show_error "Could not get FAT PARTUUID"
+
 fi
 
-rmdir "$TEMP_DIR"
+[[ -z $FAT_PARTITION_PARTUUID ]] && FINAL_MESSAGE+="\n\n--- warning: empty FAT boot partition PARTUUID ---"
+
+FINAL_MESSAGE+="\n\nFat partition partuuid: $FAT_PARTITION_PARTUUID"
+
+run_logged sed -i "s/#SQUASHFS_PARTUUID#/$SQUASHFS_PARTITION_PARTUUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
 
 if [ $? -ne 0 ]; then
-	echo "Could not remove temporary directory $TEMP_DIR"
-	exit 24
+
+	show_error "Could not substitute SQUASHFS PARTUUID in extlinux.conf"
+
 fi
 
-echo "Unmounting loop device"
-losetup -d "$LOOP_DEVICE" >/dev/null 2>&1
+run_logged sed -i "s/#FAT_PARTUUID#/$FAT_PARTITION_PARTUUID/g" "${TEMP_DIR}/extlinux/extlinux.conf"
 
 if [ $? -ne 0 ]; then
-	echo "Could not unmount $LOOP_DEVICE"
-	exit 23
+
+	show_error "Could not substitute FAT PARTUUID in extlinux.conf"
+
 fi
 
-#truncate -s 140M "$DEST_IMAGE"
+show_wait "Unmount FAT32 partition..."
+
+unmount_device "$TEMP_DIR"
+
+if [ $? -ne 0 ]; then
+
+	show_error "Could not umount $FAT_PARTITION"
+
+fi
+
+run_logged rm -rf "$TEMP_DIR"
+
+if [ $? -ne 0 ]; then
+
+	show_error "Could not remove temporary directory $TEMP_DIR"
+
+fi
+
+show_wait "Unmounting loop device..."
+
+detach_loop "$LOOP_DEVICE"
+
+if [ $? -ne 0 ]; then
+
+	show_error "Could not unmount $LOOP_DEVICE"
+
+fi
 
 sync
+sleep 2
 
-echo "Done! Available image in $DEST_IMAGE"
+log_summary "success"
+
+FINAL_MESSAGE="\nDone! Available image in ${DEST_IMAGE}${FINAL_MESSAGE}"
+
+if [ -n "$LOG_FILE" ]; then
+    FINAL_MESSAGE+="\n\nLog file: ${LOG_FILE}"
+fi
+
+dialog \
+    --backtitle "$BACKTITLE" \
+    --title "Success" \
+    --ok-label "OK" \
+    --msgbox "$FINAL_MESSAGE" 15 60
