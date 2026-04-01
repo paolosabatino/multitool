@@ -771,7 +771,7 @@ if [ $? -ne 0 ]; then
 
 fi
 
-printf "%s\n" "${TARGET_CONF}" > "${TEMP_DIR}/TARGET"
+printf "%s\n" "${BOARD_NAME}" > "${TEMP_DIR}/TARGET"
 
 if [ $? -ne 0 ]; then
 
@@ -874,8 +874,6 @@ if [ $? -ne 0 ]; then
 	show_error "Could not copy extlinux.conf"
 
 fi
-
-#!!WARNING!!: not sure if this works
 
 # Gather the PARTUUID of the squashfs partition loop device
 # blkid is friendlier in case of containers, so we use it here in place of lsblk
