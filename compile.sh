@@ -693,7 +693,6 @@ if [ $? -ne 0 ]; then
 fi
 
 # ---- boot install -----
-#TODO: VER ESSE NEGOCIO DE REDIRECIONAMENTO, TALVEZ LOGAR ISSO
 log_write "CMD" "source ${TS_SOURCES_PATH}/boot_install"
 if [ -n "$LOG_FILE" ]; then
     log_write "CMD_OUT_START" "source ${TS_SOURCES_PATH}/boot_install"
