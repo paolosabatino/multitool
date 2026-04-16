@@ -5,7 +5,7 @@ SD/eMMC card helper Multitool for TV boxes and alike
 
 This assumes a Debian-derived system, adapt to your system as appropriate. First, install required packages:
 ```sh
-sudo apt install multistrap squashfs-tools parted dosfstools ntfs-3g
+sudo apt install multistrap squashfs-tools parted dosfstools ntfs-3g qemu-user-static debian-keyring debian-archive-keyring
 ```
 
 Fetch the source code:
